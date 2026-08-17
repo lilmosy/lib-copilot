@@ -95,3 +95,9 @@ cd lib_copilot_a          (또는 lib_copilot_b)
 ## 작업 후
 
 시행착오와 결정은 `docs/devlog.md`에, 설계가 바뀌었으면 `docs/design.md`도 같이 고친다.
+
+---
+
+> `AGENTS.md` 는 이 파일을 가리키는 심볼릭 링크다. 에이전트마다 읽는 파일 이름이 달라서
+> (Claude Code는 `CLAUDE.md`, Codex 등은 `AGENTS.md`) 두 이름으로 같은 내용을 준다.
+> **내용을 복사해 두 벌로 만들지 말 것** — 한쪽만 고치면 에이전트마다 다른 지시를 받는다.
