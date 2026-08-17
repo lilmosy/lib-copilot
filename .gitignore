@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 환경변수/비밀
+.env
+.env.*
+# 키 없는 템플릿은 커밋한다 (팀원이 cp .env.example .env 로 시작)
+!.env.example
+
+# 에디터/OS
+.DS_Store
+.idea/
+.vscode/
+
+# 로그/캐시
+*.log
+.ipynb_checkpoints/
+.pytest_cache/
+
+# 크롤 산출물 — 커밋하지 않는다(구글 드라이브 등 별도 관리). docs/design.md §8 규약.
+# 재생성 가능·용량·저작권 이유. scenarios/(골든셋)·aladin_cache.json은 커밋 대상.
+**/data/collection.json
+**/data/collection.csv
+**/data/crawl_coverage.json
+**/data/detail_coverage.json
+
+# 본교/종합 장서 DB — 커밋 금지(용량·저작권). 구글 드라이브로 배포한다.
+# sogang_db_final.db는 1.3GB다. `git add data/`를 통째로 하지 말 것.
+**/data/sogang_db_final.db
+**/data/sogang_db_final.db-shm
+**/data/sogang_db_final.db-wal
+**/data/union_db.json
+
+# 알라딘 책소개 캐시 — **출판사 저작물**이라 공개 저장소에 두지 않는다(2026-08-18).
+# 예전엔 "평가 재현에 필요하니 커밋"이었는데, 저장소가 Public이 되면서 전제가 바뀌었다.
+# 어차피 DB 1.3GB가 없으면 clone해도 못 돌리므로 드라이브에서 같이 받으면 된다.
+**/data/aladin_cache.json
+
+# 회차 산출물 — **md는 커밋한다**(팀원이 서로의 회차를 읽어야 한다).
+# .json은 프롬프트 전문이 들어 있어 회차당 1MB 안팎이라 커밋하지 않는다.
+**/output/*
+!output/*.md
+
+# 백그라운드 실행 로그(쉘 리다이렉트 산출물) — 코드가 읽지 않는다
+logs/
+
+# 판단 축적(경합 판례집) 설계 — 아직 정리 중이라 저장소에 안 올린다
+docs/ledger.md
+
+# ── 상위 폴더 하나로 합치면서 추가 (2026-08-18) ──
+# a·b 어느 쪽이든 걸리도록 `**/` 를 붙였다. 상위에 .gitignore가 하나뿐이라
+# `data/…` 로 쓰면 lib_copilot_a/data/ 를 못 잡는다 — 1.3GB DB가 그대로 스테이징된다.
+**/__pycache__/
+**/.DS_Store
+.DS_Store

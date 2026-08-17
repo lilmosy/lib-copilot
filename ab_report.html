@@ -1,0 +1,740 @@
+<title>키워드 채널 A/B</title>
+<style>
+  /* ── 토큰 ─────────────────────────────────────────────
+     서지 카드에서 가져온 팔레트. 크림색 대신 냉백색 지면,
+     도서관 검인 도장의 잉크 남색을 단 하나의 악센트로. */
+  :root {
+    --paper:      #FBFBFD;
+    --card:       #FFFFFF;
+    --sunk:       #F3F4F7;
+    --ink:        #15171C;
+    --ink-2:      #454A56;
+    --ink-3:      #767C8A;
+    --rule:       #E2E4EA;
+    --rule-soft:  #EDEEF2;
+    --accent:     #33459A;
+    --accent-sunk:#EDEFF9;
+    --pass:       #1B6B4F;
+    --pass-sunk:  #E8F2ED;
+    --fail:       #A6322B;
+    --fail-sunk:  #F8EBEA;
+    --warn:       #8A5D0C;
+    --warn-sunk:  #F8F0DE;
+    --shadow:     0 1px 2px rgba(21,23,28,.05), 0 8px 24px -16px rgba(21,23,28,.25);
+
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, "Cascadia Mono", monospace;
+    --sans: Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+            "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #101116;
+      --card:       #181A20;
+      --sunk:       #1E2027;
+      --ink:        #E7E9EE;
+      --ink-2:      #AEB4C0;
+      --ink-3:      #7C8290;
+      --rule:       #2A2D36;
+      --rule-soft:  #23262E;
+      --accent:     #93A5EE;
+      --accent-sunk:#1D2138;
+      --pass:       #62C79E;
+      --pass-sunk:  #14261F;
+      --fail:       #EE8A80;
+      --fail-sunk:  #2B1918;
+      --warn:       #D9AC5B;
+      --warn-sunk:  #2A2113;
+      --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #101116;
+    --card:       #181A20;
+    --sunk:       #1E2027;
+    --ink:        #E7E9EE;
+    --ink-2:      #AEB4C0;
+    --ink-3:      #7C8290;
+    --rule:       #2A2D36;
+    --rule-soft:  #23262E;
+    --accent:     #93A5EE;
+    --accent-sunk:#1D2138;
+    --pass:       #62C79E;
+    --pass-sunk:  #14261F;
+    --fail:       #EE8A80;
+    --fail-sunk:  #2B1918;
+    --warn:       #D9AC5B;
+    --warn-sunk:  #2A2113;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── 표제부 ── */
+  header { padding: 56px 0 28px; border-bottom: 1px solid var(--rule); }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-3); margin: 0 0 14px;
+  }
+  h1 {
+    margin: 0 0 18px; font-size: clamp(28px, 4.4vw, 40px);
+    line-height: 1.18; letter-spacing: -.022em; font-weight: 700;
+    text-wrap: balance;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 4px 10px;
+    border: 1px solid var(--rule); border-radius: 3px;
+    color: var(--ink-2); background: var(--card);
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  /* ── 범례: 이 문서를 읽는 열쇠라 항상 보이게 ── */
+  .legend {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 0; margin: 24px 0 0; border: 1px solid var(--rule);
+    border-radius: 4px; overflow: hidden; background: var(--card);
+  }
+  .legend div { padding: 14px 16px; border-right: 1px solid var(--rule-soft); }
+  .legend div:last-child { border-right: 0; }
+  .legend dt {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--accent); margin: 0 0 4px; letter-spacing: .02em;
+  }
+  .legend dd { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+
+  /* ── 가로 탭 ── */
+  .tabbar {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--rule);
+    margin-top: 28px;
+  }
+  .tabs {
+    display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin;
+    max-width: 1000px; margin: 0 auto; padding: 0 24px;
+  }
+  .tab {
+    flex: 0 0 auto; appearance: none; background: none; border: 0;
+    border-bottom: 2px solid transparent; cursor: pointer;
+    padding: 14px 14px 12px; font-family: var(--sans); font-size: 14px;
+    font-weight: 500; color: var(--ink-3); white-space: nowrap;
+    transition: color .12s, border-color .12s;
+  }
+  .tab .num {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+    margin-right: 7px; opacity: .8;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab[aria-selected="true"] .num { color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 2px; }
+
+  .panel { padding: 40px 0 72px; }
+  .panel[hidden] { display: none; }
+
+  h2 {
+    margin: 0 0 6px; font-size: 22px; letter-spacing: -.015em;
+    font-weight: 700; text-wrap: balance;
+  }
+  h2 + .lede { margin: 0 0 28px; color: var(--ink-2); font-size: 15px; }
+  h3 {
+    margin: 40px 0 12px; font-size: 16px; font-weight: 650;
+    letter-spacing: -.008em; text-wrap: balance;
+    padding-left: 12px; border-left: 3px solid var(--accent);
+  }
+  h3:first-of-type { margin-top: 28px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  strong { font-weight: 650; }
+  code {
+    font-family: var(--mono); font-size: .88em; background: var(--sunk);
+    padding: 1px 5px; border-radius: 3px; color: var(--ink);
+  }
+  .ddc { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── 표 ── */
+  .scroll { overflow-x: auto; margin: 0 0 22px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 480px; }
+  th, td { padding: 10px 13px; text-align: left; border-bottom: 1px solid var(--rule-soft); }
+  thead th {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+    border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tr.mark td { background: var(--accent-sunk); }
+  tr.mark td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+  /* ── 코드/실측 블록 ── */
+  pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    background: var(--sunk); border: 1px solid var(--rule-soft);
+    border-radius: 4px; padding: 16px 18px; overflow-x: auto;
+    margin: 0 0 22px; color: var(--ink); white-space: pre;
+  }
+
+  /* ── 판정 표식 ── */
+  .v { font-family: var(--mono); font-size: 12.5px; white-space: nowrap;
+       display: inline-flex; align-items: center; gap: 6px; }
+  .v::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+  .v.ok::before { background: var(--pass); }
+  .v.no::before { background: var(--fail); }
+  .v.ok { color: var(--ink); }
+  .v.no { color: var(--fail); }
+  .esc { font-size: 10.5px; color: var(--accent); border: 1px solid var(--accent);
+         border-radius: 2px; padding: 0 4px; margin-left: 5px; font-family: var(--mono); }
+
+  .tag {
+    font-family: var(--mono); font-size: 11px; padding: 2px 7px;
+    border-radius: 3px; white-space: nowrap; font-weight: 600;
+  }
+  .tag.always-ok { background: var(--pass-sunk); color: var(--pass); }
+  .tag.always-no { background: var(--fail-sunk); color: var(--fail); }
+  .tag.wobble    { background: var(--warn-sunk); color: var(--warn); }
+  .tag.diff-ha   { background: var(--sunk); color: var(--ink-3); }
+  .tag.diff-jung { background: var(--accent-sunk); color: var(--accent); }
+  .tag.diff-sang { background: var(--fail-sunk); color: var(--fail); }
+
+  /* ── 콜아웃 ── */
+  .note {
+    border-left: 3px solid var(--ink-3); background: var(--sunk);
+    padding: 14px 18px; margin: 0 0 22px; border-radius: 0 4px 4px 0;
+    font-size: 14px; color: var(--ink-2);
+  }
+  .note.key { border-left-color: var(--accent); background: var(--accent-sunk); color: var(--ink); }
+  .note.warn { border-left-color: var(--warn); background: var(--warn-sunk); color: var(--ink); }
+  .note p:last-child { margin-bottom: 0; }
+
+  /* ── 케이스 ── */
+  .casebar {
+    display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 16px;
+    border-bottom: 1px solid var(--rule); margin-bottom: 26px;
+  }
+  .cbtn {
+    flex: 0 0 auto; appearance: none; cursor: pointer;
+    font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+    padding: 7px 12px; border-radius: 3px;
+    border: 1px solid var(--rule); background: var(--card); color: var(--ink-2);
+    transition: all .12s;
+  }
+  .cbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .cbtn[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  :root[data-theme="dark"] .cbtn[aria-selected="true"],
+  :root:not([data-theme="light"]) .cbtn[aria-selected="true"] { color: #101116; }
+  .cbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .case[hidden] { display: none; }
+  .case-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .case-head h3 { margin: 0; border: 0; padding: 0; font-size: 20px; }
+  .case-id { font-family: var(--mono); font-size: 13px; color: var(--ink-3); }
+  .sub { font-family: var(--mono); font-size: 11px; letter-spacing: .09em;
+         text-transform: uppercase; color: var(--ink-3); margin: 30px 0 10px; }
+  .facts { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+  .facts li { padding: 8px 0; border-bottom: 1px solid var(--rule-soft); display: flex; gap: 14px; }
+  .facts li:last-child { border-bottom: 0; }
+  .facts b { flex: 0 0 128px; font-weight: 600; color: var(--ink-3); font-size: 12.5px; }
+
+  footer {
+    border-top: 1px solid var(--rule); padding: 26px 0 60px;
+    font-size: 13px; color: var(--ink-3);
+  }
+  footer code { background: none; padding: 0; color: var(--ink-2); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (max-width: 620px) {
+    .facts li { flex-direction: column; gap: 2px; }
+    .facts b { flex: none; }
+  }
+</style>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">회차 종합 · 2026-08-18</p>
+    <h1>키워드 채널 A/B 회차 종합</h1>
+    <div class="chips">
+      <span class="chip">골든셋 <b>12건</b></span>
+      <span class="chip"><b>4조합</b> × <b>3회차</b></span>
+      <span class="chip">총 <b>144건</b></span>
+      <span class="chip">모델 <b>gpt-5.6-terra</b></span>
+    </div>
+
+    <dl class="legend">
+      <div>
+        <dt>A · 병합</dt>
+        <dd>082 게이트 → 키워드 추출 → 검색 → 082+종합서지+키워드를 한 자리에 놓고 판단.<br><b>항상 키워드를 쓴다.</b></dd>
+      </div>
+      <div>
+        <dt>B · 조건부</dt>
+        <dd>082 게이트 → 082+종합서지로 먼저 판단 → 미달일 때만 키워드 → 다시 전부 놓고 판단.<br><b>자신 없을 때만 쓴다.</b></dd>
+      </div>
+      <div>
+        <dt>on / off</dt>
+        <dd>앞 단계에서 이미 본 후보의 서가 40권을 최종 판단에 <b>다시 넣는가</b>. off는 점수만 넘긴다.</dd>
+      </div>
+    </dl>
+  </div>
+</header>
+
+<nav class="tabbar">
+  <div class="tabs" role="tablist" aria-label="보고서 절">
+    <button class="tab" role="tab" aria-selected="true"  aria-controls="p1" id="t1"><span class="num">01</span>결론</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p2" id="t2"><span class="num">02</span>왜 안 올랐나</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p3" id="t3"><span class="num">03</span>B의 함정</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p4" id="t4"><span class="num">04</span>off 실험</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p5" id="t5"><span class="num">05</span>토큰 실측</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p6" id="t6"><span class="num">06</span>다음에 할 것</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p7" id="t7"><span class="num">07</span>읽을 때 주의</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p8" id="t8"><span class="num">08</span>케이스 12건</button>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- ══ 01 결론 ══ -->
+<section class="panel" role="tabpanel" id="p1" aria-labelledby="t1">
+  <h2>결론 먼저</h2>
+  <p class="lede">키워드 채널은 후보를 제대로 데려왔지만, 골든셋 점수는 안 올랐습니다.</p>
+  <p>병목이 검색이 아니라 <strong>판단</strong>에 있고, 그 원인 하나가 프롬프트의 3개 상한입니다.</p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>조합</th><th>맞음 (3회차)</th><th>항상 틀림</th>
+          <th class="n">토큰/건</th><th class="n">LLM/건</th><th class="n">후보/건</th><th class="n">키워드 탄 건</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="mark">
+          <td><strong>A_on</strong></td><td class="ddc">8 · 9 · 8</td><td class="ddc">#5 #10 #11</td>
+          <td class="n">27,333</td><td class="n">2.5</td><td class="n">5.5</td><td class="n">10/12</td>
+        </tr>
+        <tr>
+          <td>A_off</td><td class="ddc">9 · <strong>5</strong> · 8</td><td class="ddc">#8 #10 #11</td>
+          <td class="n">24,537</td><td class="n">2.5</td><td class="n">5.5</td><td class="n">10/12</td>
+        </tr>
+        <tr class="mark">
+          <td><strong>B_on</strong></td><td class="ddc">9 · 10 · 9</td><td class="ddc">#10</td>
+          <td class="n">27,250</td><td class="n">2.0</td><td class="n">3.6</td><td class="n"><strong>2/12</strong></td>
+        </tr>
+        <tr>
+          <td>B_off</td><td class="ddc">9 · 9 · 8</td><td class="ddc">#8 #10 #12</td>
+          <td class="n">19,246</td><td class="n">1.7</td><td class="n">3.2</td><td class="n"><strong>0.3/12</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note key">
+    <p>기준선(키워드 없던 <code>20260813_terra</code>)은 맞음 8~9였습니다. <strong>4조합 어느 쪽도 유의미하게 못 넘었습니다.</strong></p>
+  </div>
+
+  <h3>그래도 좋아진 것</h3>
+<pre>#7 「게임으로 철학하기」   기준선: 게이트가 0.90에 열려 082(102)로 오답
+                        지금:  4조합 12회차 전부 794.801 정답  ✅</pre>
+  <p><code>THRESHOLD_1</code>을 0.92로 올린 효과입니다. <code>#12 일리아스</code>도 전 회차 정답입니다.</p>
+</section>
+
+<!-- ══ 02 왜 안 올랐나 ══ -->
+<section class="panel" role="tabpanel" id="p2" aria-labelledby="t2" hidden>
+  <h2>왜 안 올랐나</h2>
+  <p class="lede">네 가지가 겹쳤습니다. 검색은 성공했고, 실패는 전부 그다음에서 났습니다.</p>
+
+  <h3>① 후보 모으기는 완벽했다</h3>
+<pre>정답이 최종 후보 목록에 들어와 있던 비율   36/36  (12건 × 3회차, A_on)</pre>
+  <p><strong>한 건도 놓치지 않았습니다.</strong> 키워드 채널은 10건 중 7건에서 정답을 독립적으로 다시 찾아내 <code>[종합서지 + 키워드검색]</code>으로 <strong>증거가 겹쳤습니다</strong>. 실패는 전부 그다음 단계에서 났습니다.</p>
+
+  <h3>② 프롬프트가 후보를 3개로 자른다 — 가장 큰 원인</h3>
+  <p><code>prompts/systemprompt_2nd.txt:34</code> — <em>“검토한 번호를 점수와 함께 <strong>최대 3개까지</strong> 담으세요.”</em></p>
+<pre>       넣은 후보 → LLM 출력    정답이 후보에?   정답이 출력에?
+#5        8개   →   3개           3/3            3/3
+#10       6개   →   3개           3/3            2/3   ← 잘려서 사라짐
+#11       7개   →   3개           3/3            2/3   ← 잘려서 사라짐</pre>
+  <p>이 문장은 후보가 3~4개이던 시절(082 + 종합서지 3위)에 쓴 것이라 그땐 자를 게 없어 무해했습니다. 지금은 5~8개를 주므로 <strong>늘린 만큼 그대로 버려집니다.</strong></p>
+  <div class="note warn">
+    <p><strong>이게 A/B 비교를 오염시킵니다.</strong> 상한이 후보를 많이 주는 A만 정확히 그만큼 깎으니, “후보를 늘리는 게 이득인가”라는 질문 자체가 성립하지 않습니다.</p>
+  </div>
+
+  <h3>③ 키워드가 큰 서가를 데려와 정답을 밀어낸다</h3>
+<pre>#11 부린왕자   키워드 전량:  333.33(97권) · 332.6324(64권) ← 정답이 2위
+              상위 3개 컷:  333.33 · 332.63247 · 333.332
+              최종 판단:    333.33 이 0.85로 자동확정                    ❌
+
+#10 이중언어자  키워드가 400.19(30) · 400.193(18) · 400.42(6)를 데려옴
+              그게 082=306.446(정답)을 밀어냄                          ❌</pre>
+  <p><code>MAX_KEYWORD_CANDIDATES=3</code>을 <strong>건수순</strong>으로 뽑으니 늘 큰 서가가 뽑힙니다. <code>≥2</code> 필터가 대서가를 걸러줬지만, 남은 것 중에서도 큰 쪽이 이깁니다.</p>
+
+  <h3>④ 검색어 하나가 결과를 통째로 바꾼다 — 가장 큰 지렛대</h3>
+  <p><code>#10</code>에서 같은 책·같은 검색 로직에 <strong>검색어만 다르게</strong> 넣어봤습니다.</p>
+<pre>LLM이 뽑은 것   이중언어 · Bilingualism · 언어 습득 · Language acquisition · Psycholinguistics
+    →  400.19(30) · 400.193(18) · 400.42(6) …          정답 306.446 안 나옴  ❌
+
+손으로 넣은 것   이중언어 · bilingual · sociolinguistics · multilingual · 언어 다양성
+    →  <strong>306.446(17) 1위</strong> · 370.117(3) · 400.42(3) …   정답 1위            ✅</pre>
+  <p><code>Psycholinguistics</code>(심리언어학)가 들어가니 검색이 통째로 인지·습득 쪽(400번대)으로 끌려갔고, <code>sociolinguistics</code>(사회언어학)를 넣으면 정답 자리(306.446)가 1위로 옵니다.</p>
+  <div class="note">
+    <p><strong>공정한 비교는 아닙니다</strong> — 제가 고른 검색어는 306.446 서가의 주제명을 이미 본 뒤에 고른 것입니다. 다만 <strong>검색어 한 단어 차이로 결과가 정반대가 된다</strong>는 사실 자체는 유효합니다.</p>
+  </div>
+  <p>필터도 랭킹도 이 앞에서는 부차적입니다. <strong>키워드 추출 프롬프트가 이 채널의 성패를 정합니다.</strong></p>
+</section>
+
+<!-- ══ 03 B의 함정 ══ -->
+<section class="panel" role="tabpanel" id="p3" aria-labelledby="t3" hidden>
+  <h2>B가 나아 보이는 건 설계 우위가 아니다</h2>
+  <p class="lede">B_on이 맞음 9·10·9로 제일 높지만, 이유는 키워드를 거의 안 써서입니다.</p>
+
+<pre>B에서 키워드 단계까지 간 건       12건 중 2건
+  r1  승계 [1] · 082게이트 [9] · 키워드 [8, 11]
+  r2  승계 [1] · 082게이트 [9] · 키워드 [6, 11]
+  r3  승계 [1] · 082게이트 [9] · 키워드 [8, 11]</pre>
+  <p>LLM 호출 2.0회/건, 평균 후보 3.6개가 그 사실을 그대로 보여줍니다. <strong>즉 B_on ≈ 키워드 없던 기준선 + 2건</strong>입니다.</p>
+
+  <h3>그리고 B의 트리거는 #10을 구조적으로 못 잡는다</h3>
+  <p>교수님께 드렸던 논거가 숫자로 확인됐습니다.</p>
+<pre>#10 「어느 완벽한 이중언어자」
+    3회차 모두 종합서지 판단에서 확신을 넘겨 자동확정 → 키워드 단계를 한 번도 못 탐
+    3회차 모두 오답</pre>
+  <div class="note key">
+    <p>트리거가 “LLM이 확신하나”인데 우리가 고치려는 건 <strong>확신하며 틀린</strong> 건입니다. 자기가 고쳐야 할 케이스를 스스로 걸러냅니다.</p>
+  </div>
+
+  <h3>골든셋이 실전과 다르다</h3>
+<pre>골든셋 12건 중 종합서지 득표가 있는 건   12 / 12   (전부)
+실전 신간                              사실상 0</pre>
+  <p><code>union_db.json</code>은 그 12권의 득표만 갖고 있고, 실전 신간엔 타대학 득표가 없습니다. <strong>B가 이긴 건 “종합서지가 항상 있는 세계”에서입니다.</strong> 실전에선 그 이점이 사라집니다.</p>
+</section>
+
+<!-- ══ 04 off 실험 ══ -->
+<section class="panel" role="tabpanel" id="p4" aria-labelledby="t4" hidden>
+  <h2>앞 서가 생략(<span class="ddc">off</span>)은 위험하다</h2>
+  <p class="lede">교수님 제안(앞 호출에서 본 후보는 점수만 넘기고 서가 생략)의 실측입니다.</p>
+
+<pre>A_on   맞음 8 · 9 · 8      토큰 27,333/건
+A_off  맞음 9 · 5 · 8      토큰 24,537/건   ← r2에서 12건 중 7건 오답</pre>
+
+  <p>토큰은 10% 줄지만 <strong>한 회차가 무너졌습니다</strong>(#3 #5 #6 #8 #10 #11 #12). 다른 후보는 서가 40권을 보여주고 이 후보만 숫자를 주면 LLM이 재검토할 방법이 없다는 우려가 그대로 나타난 것으로 보입니다.</p>
+  <p>B_off는 서가를 160권 생략하는데 토큰이 30% 줄지만 키워드가 사실상 안 돌아(0.3/12) 비교 의미가 약합니다.</p>
+
+  <div class="note warn">
+    <p><strong>A와 B의 <code>off</code>는 서로 다른 실험입니다.</strong> A는 082 서가 40권을, B는 082+종합서지 160권을 생략합니다. 같은 스위치지만 B의 절약이 훨씬 크고 그만큼 위험도 큽니다.</p>
+  </div>
+</section>
+
+<!-- ══ 05 토큰 ══ -->
+<section class="panel" role="tabpanel" id="p5" aria-labelledby="t5" hidden>
+  <h2>토큰 실측 — 교수님 답변용</h2>
+  <p class="lede">지금까지는 추정치였습니다. 아래는 실측입니다(입력 토큰, 12건 평균).</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th></th><th class="n">A (병합)</th><th class="n">B (조건부)</th></tr></thead>
+      <tbody>
+        <tr><td>건당 입력 토큰</td><td class="n">27,333</td><td class="n">27,250</td></tr>
+        <tr><td>건당 LLM 호출</td><td class="n">2.5회</td><td class="n">2.0회</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>사실상 동률입니다.</strong> 추정으로 드렸던 「A 29,713 / B 28,277」과 방향이 같습니다. B가 호출은 적지만 마지막에 082+종합서지를 다시 실어보내 토큰에서 상쇄됩니다.</p>
+
+  <div class="note key">
+    <p><strong>비용으로는 A/B가 안 갈립니다.</strong> 판단 근거는 트리거여야 합니다 — 03절을 보세요.</p>
+  </div>
+</section>
+
+<!-- ══ 06 다음 ══ -->
+<section class="panel" role="tabpanel" id="p6" aria-labelledby="t6" hidden>
+  <h2>다음에 할 것</h2>
+  <p class="lede">①②는 프롬프트 한 문장 + 설정 한 줄이라 5분이면 됩니다. ③이 API 한 시간입니다.</p>
+
+  <h3>① 3개 상한을 푼다</h3>
+  <p><code>systemprompt_2nd.txt</code>의 “최대 3개까지”를 후보 수에 맞춥니다. <strong>이게 안 풀리면 A/B 비교가 성립하지 않으므로 가장 먼저</strong>입니다.</p>
+
+  <h3>② 키워드 후보를 건수순으로 뽑지 않는다</h3>
+  <p>큰 서가가 늘 이깁니다. 필터(<code>≥2</code>)는 잘 들었으니 그다음 정렬을 손봐야 합니다 — #11에서 정답이 2위인데 컷에서 밀렸습니다.</p>
+
+  <h3>③ 그다음 A/B를 다시 한 번</h3>
+  <p>①②를 고친 뒤라야 “후보를 늘리는 게 이득인가”를 잽니다.</p>
+
+  <h3>④ <span class="ddc">THRESHOLD_2</span> 재산정</h3>
+  <p>저장된 json만으로 <strong>재실행 없이</strong> 쓸어볼 수 있습니다. 지금 0.82는 Opus 회차 값입니다.</p>
+
+  <h3>⑤ <span class="ddc">off</span>는 보류</h3>
+  <p>토큰 10% 아끼고 한 회차가 무너지는 거래는 지금 단계에서 이득이 아닙니다.</p>
+
+  <h3>지금 고른다면</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>판단</th><th>무엇</th><th>이유</th></tr></thead>
+      <tbody>
+        <tr class="mark"><td><strong>채택</strong></td><td class="ddc">A_on</td><td>항상 키워드를 쓰므로 실전(종합서지 없음) 조건에 맞다</td></tr>
+        <tr><td>버림</td><td class="ddc">off 둘 다</td><td>토큰 10~30% 아끼고 한 회차가 무너지는 거래</td></tr>
+        <tr><td>보류</td><td class="ddc">B</td><td>구조가 아니라 트리거(LLM 확신도)가 문제. 코드 트리거로 바꾸면 살릴 수 있다</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══ 07 주의 ══ -->
+<section class="panel" role="tabpanel" id="p7" aria-labelledby="t7" hidden>
+  <h2>이 표를 읽을 때 주의할 것</h2>
+  <p class="lede">숫자만 보면 잘못 읽기 쉬운 지점 넷.</p>
+
+  <h3>A와 B의 <span class="ddc">off</span>는 서로 다른 실험이다</h3>
+  <p>A는 082 서가 40권을, B는 082+종합서지 160권을 생략합니다. 같은 이름이지만 절약도 위험도 규모가 다릅니다.</p>
+
+  <h3><span class="ddc">covers_both</span> 지표는 한쪽만 후하다</h3>
+  <p>갈린 4건 중 경합 쌍을 다 담은 수입니다.</p>
+<pre>A_on [1,3,3]   ·   B_on [2,2,2]   ·   A_off [2,2,3]   ·   B_off [2,2,1]</pre>
+  <p>이 지표는 <strong>작성자안을 앞 3자리로 느슨하게, 교열최종을 완전일치로</strong> 재고 있어 한쪽만 후합니다(<code>evaluate.py:93</code>).</p>
+
+  <h3><span class="ddc">#3 향신료</span>의 종합서지 데이터는 다른 책 것이다</h3>
+  <p>장-마리 펠트 2005년 책입니다. 우리 책은 Balard, Michel 2026년 책이고요. 두 책이 같은 주제라 결과가 안 망가졌을 뿐입니다 — <code>design.md §9.1</code>.</p>
+
+  <h3>12건이라 한두 건이 크게 움직인다</h3>
+  <p>한 건이 뒤집히면 비율이 8%p씩 움직입니다. 3회차를 돌리는 이유가 그것입니다.</p>
+</section>
+
+<!-- ══ 08 케이스 ══ -->
+<section class="panel" role="tabpanel" id="p8" aria-labelledby="t8" hidden>
+  <h2>케이스별 상세</h2>
+  <p class="lede">각 케이스의 「사서는 이렇게 했다」는 시나리오 JSON의 <code>note</code> 한 줄입니다. docx의 근무기록을 <code>human_trace</code> 필드로 옮기면 여기에 자동으로 같이 찍힙니다.</p>
+
+  <div class="casebar" role="tablist" aria-label="케이스"></div>
+  <div id="cases"></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>원본 데이터 — <code>lib_copilot_a/output/*.json</code> · <code>lib_copilot_b/output/*.json</code> (조합당 3개, 총 12개). 프롬프트 원물·토큰·지연은 각 json의 <code>trace</code>에 있습니다.</p>
+  </div>
+</footer>
+
+<script>
+// ── 케이스 데이터 ── 회차 json에서 뽑은 값 그대로.
+const CASES = [
+ {id:1, title:"바빌론 부자들의 지혜", diff:"하", head:"082 없음  →  174.4",
+  note:"원제/기존서지 승계 케이스. 본교 174.4에 개정판 번역서 존재 → 승계. 종합서지 최빈은 332.024(재테크)지만 본교 서지 우선 규칙으로 무시. 0차 승계가 voting/LLM보다 먼저 작동해야 하는 대표 케이스.",
+  rows:[["A_on",["174.4","174.4","174.4"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["174.4","174.4","174.4"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_on",["174.4","174.4","174.4"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["174.4","174.4","174.4"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["경로","0차 승계로 끝남 (LLM 안 부름)"]]},
+
+ {id:2, title:"이 책만큼은 끝까지 읽어 보겠습니다", diff:"하", head:"082 029.4  →  028",
+  note:"082(029.4) 본교 무관 → 종합서지 028(책읽기/독서)로 수렴. 082 기각 후 재선택.",
+  rows:[["A_on",["028","028","028"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["028","028","028"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_on",["028","028","028"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["028","028","028"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 1위"],
+         ["검색어","독서, Reading, 독서 습관, Reading interests, 독자"],
+         ["최종 후보","028(0.96), 028.9(0.78), 028.5(0.32)"],
+         ["후보 → 출력","넣은 후보 6개 중 <b>3개만 출력</b>"]]},
+
+ {id:3, title:"향신료의 역사", diff:"하", head:"082 641.3383  →  641.338309",
+  note:"082(641.3383)를 기존 유사서(향신료 역사류 641.338309)에 맞춰 미세 확장. 후보 사실상 단일이라 난도 낮음. ← 세분 번호가 정답: '급/장르' 프롬프트가 이걸 더 coarse한 641.3383로 밀지 않는지 검증 대상.",
+  rows:[["A_on",["641.338309","641.338309","641.338309"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["641.338309","382.41383","641.338309"],[1,0,1],[0,0,0],"wobble","흔들림"],
+        ["B_on",["641.338309","641.338309","641.338309"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["641.338309","641.338309","641.338309"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 2위"],
+         ["검색어","향신료, spices, 향신료 무역, Spice trade, 중세 무역"],
+         ["최종 후보","641.338309(0.95), 641.3383(0.86), 382.41383(0.79)"],
+         ["후보 → 출력","넣은 후보 6개 중 <b>3개만 출력</b>"],
+         ["⚠️ 데이터","종합서지가 <b>다른 책</b> 것입니다(장-마리 펠트 2005). 같은 주제라 결과가 안 망가졌을 뿐 — design.md §9.1"]]},
+
+ {id:4, title:"차근차근 전통주", diff:"하", head:"082 663.1  →  641.210951",
+  note:"082(663.1 양조공업) 대신 종합서지 641.210951(한국 전통주/조리)로 단일 수렴. voting 단일값.",
+  rows:[["A_on",["641.210951","641.210951","641.210951"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["641.210951","641.210951","641.210951"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_on",["641.210951","641.210951","641.210951"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["641.210951","641.210951","641.210951"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 1위"],
+         ["검색어","전통주, Korean alcoholic beverages, 양조, Brewing, Rice wine"],
+         ["최종 후보","641.210951(0.98), 663.1(0.68)"],
+         ["후보 → 출력","넣은 후보 5개 중 <b>2개만 출력</b>"]]},
+
+ {id:5, title:"가장 인간적인 도시", diff:"중", head:"082 720.105  →  720.2",
+  note:"082(720.105)를 '주제 align 안 됨'으로 기각하고, 종합서지 분포(720.2 최다)와 본교서지 의미(도시+건축+공간)로 재선택.",
+  rows:[["A_on",["720.105","720.105","720.105"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["A_off",["720.2","720.105","720.2"],[1,0,1],[0,0,0],"wobble","흔들림"],
+        ["B_on",["720.105","720.2","720.105"],[0,1,0],[0,0,0],"wobble","흔들림"],
+        ["B_off",["720.2","720.2","720.2"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지</b> · 키워드 검색엔 안 걸림"],
+         ["검색어","도시 건축, 도시 설계, Architecture and technology, City planning, Artificial intelligence"],
+         ["최종 후보","720.105(0.9), 720.2(0.79), 720.285(0.66)"],
+         ["후보 → 출력","넣은 후보 8개 중 <b>3개만 출력</b>"]]},
+
+ {id:6, title:"이것은 왜 오렌지주스인가", diff:"중", head:"082 363.19262  →  363.192",
+  note:"082(363.19262)을 더 coarse한 363.192(식품안전/공중보건)로 조정. 세분↔coarse 판단.",
+  rows:[["A_on",["363.192","363.192","363.192"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["363.192","363.1926","363.192"],[1,0,1],[0,0,0],"wobble","흔들림"],
+        ["B_on",["363.192","363.192","363.192"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["363.192","363.192","363.192"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 4위"],
+         ["검색어","식품 라벨, Food labeling, 식품 규제, Food law and legislation, Genetically modified foods"],
+         ["최종 후보","363.192(0.9), 344.7304232(0.55), 344.04232(0.48)"],
+         ["후보 → 출력","넣은 후보 7개 중 <b>3개만 출력</b>"]]},
+
+ {id:7, title:"게임으로 철학하기", diff:"중", head:"082 102  →  794.801",
+  note:"082(102 철학)이 주제와 어긋남 → 종합서지 794.801(비디오게임)로 재선택. '무엇에 관한 책'(게임)이 '어떤 방법의 책'(철학)보다 우선.",
+  rows:[["A_on",["794.801","794.801","794.801"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["794.801","794.801","794.801"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_on",["794.801","794.801","794.801"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["794.801","794.801","794.801"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 23위"],
+         ["검색어","비디오 게임, Video games, Games, 놀이, Play"],
+         ["최종 후보","794.801(0.96), 102(0.78), 794.8(0.7)"],
+         ["후보 → 출력","넣은 후보 6개 중 <b>3개만 출력</b>"],
+         ["✅ 개선","기준선에선 게이트가 0.90에 열려 082(102)로 오답이던 건. THRESHOLD_1 0.92의 성과"]]},
+
+ {id:8, title:"야구장의 피아노맨", diff:"중", head:"082 781.63  →  781.63",
+  note:"082(781.63 대중음악) 유지. 단 종합서지가 796(스포츠)와 781.63(음악) 동률로 흩어짐 → 본교 서가의미로 tie-break. 흩어짐 신호 관찰 대상.",
+  rows:[["A_on",["781.63","781.63","781.63"],[1,1,1],[1,0,1],"always-ok","항상 맞음"],
+        ["A_off",["780.2","796","796"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["B_on",["781.63","781.63","781.63"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["780.2","796","796"],[0,0,0],[0,0,0],"always-no","항상 틀림"]],
+  facts:[["정답 출처","<b>082 + 키워드검색</b> · 키워드 검색 전량에서 6위"],
+         ["검색어","스포츠 음악, Sports--Songs and music, 야구 음악, Baseball--Songs and music, Popular music"],
+         ["최종 후보","781.63(0.8), 780.2(0.69), 796(0.58)"],
+         ["후보 → 출력","넣은 후보 8개 중 <b>3개만 출력</b>"]]},
+
+ {id:9, title:"사랑받는 서점을 만들기 위해 2000일 동안 내가 한 일", diff:"상",
+  head:"082 381.45002  →  658.827 → 381.45002  (교열에서 뒤집힘)",
+  note:"서점경영: 381.45002(서적판매업) vs 658.827(소매경영) 2파전. 작성자 658.827 → 교열 381.45002(뒤집힘). 상 케이스, Top-k+에스컬레이션 평가.",
+  rows:[["A_on",["381.45002","381.45002","381.45002"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["381.45002","381.45002","381.45002"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_on",["381.45002","381.45002","381.45002"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["381.45002","381.45002","381.45002"],[1,1,1],[0,0,0],"always-ok","항상 맞음"]],
+  facts:[["경로","082 게이트로 조기 확정 (1차 0.93) — 뒤 단계를 안 봄"]]},
+
+ {id:10, title:"어느 완벽한 이중언어자", diff:"상",
+  head:"082 306.446  →  400.42 → 306.446  (교열에서 뒤집힘)",
+  note:"이중언어: 400.42(언어학) vs 306.446(사회언어학/사회학) 2파전. 작성자 400.42 → 교열 306.446(뒤집힘). 종합서지 최빈은 306.446. 상 케이스.",
+  rows:[["A_on",["400.193","400.193","407"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["A_off",["400.19","400.193","400.193"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["B_on",["401.93","401.93","407"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["B_off",["407","407","407"],[0,0,0],[0,0,0],"always-no","항상 틀림"]],
+  facts:[["정답 출처","<b>082</b> · 키워드 검색엔 안 걸림"],
+         ["검색어","이중언어, Bilingualism, 언어 습득, Language acquisition, Psycholinguistics"],
+         ["최종 후보","400.193(0.92), 400.42(0.86), 400.19(0.8)"],
+         ["후보 → 출력","넣은 후보 6개 중 <b>3개만 출력</b>"],
+         ["⚠️ B의 함정","3회차 모두 키워드 단계를 <b>한 번도 못 탔습니다</b> — 확신도 트리거의 구조적 한계"]]},
+
+ {id:11, title:"부린 왕자", diff:"상",
+  head:"082 650.1  →  179.9 → 332.6324  (교열에서 뒤집힘)",
+  note:"문학(우화)/부동산/성찰 3파전. 작성자 179.9(성찰) → 교열 332.6324(부동산, 뒤집힘). 정교한 논증조차 정답을 담보 못 하는 최상위 난도 → 후보+근거 병기 필수. 정답 하나 맞히기가 아니라 Top-k+에스컬레이션으로 평가.",
+  rows:[["A_on",["333.33","333.33","333.33"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["A_off",["333.33","333.33","333.33"],[0,0,0],[0,0,0],"always-no","항상 틀림"],
+        ["B_on",["333.33","333.33","333.33"],[0,0,0],[0,0,1],"always-no","항상 틀림"],
+        ["B_off",["332.6324","332.6324","333.33"],[1,1,0],[0,0,1],"wobble","흔들림"]],
+  facts:[["정답 출처","<b>종합서지 + 키워드검색</b> · 키워드 검색 전량에서 2위"],
+         ["검색어","부동산, Real estate, 주택, Housing, Real estate investment"],
+         ["최종 후보","333.33(0.85), 179.9(0.46), 650.1(0.32)"],
+         ["후보 → 출력","넣은 후보 7개 중 <b>3개만 출력</b>"],
+         ["⚠️ 회귀","기준선에선 332.6324로 맞고 에스컬레이션까지 했던 건. 키워드가 큰 서가 333.33(97권)을 데려와 밀어냄"]]},
+
+ {id:12, title:"일리아스 좋아하세요?", diff:"상",
+  head:"082 291.13  →  883 → 028.9  (교열에서 뒤집힘)",
+  note:"독서에세이/고전: 883(그리스문학) vs 028.9(독서) 갈림. 작성자 883 → 교열 028.9(뒤집힘). '무엇에 관한가'(고전)vs'무슨 활동인가'(독서). 상 케이스.",
+  rows:[["A_on",["028.9","028.9","028.9"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["A_off",["028.9","883.01","883.01"],[1,0,0],[0,0,1],"wobble","흔들림"],
+        ["B_on",["028.9","028.9","028.9"],[1,1,1],[0,0,0],"always-ok","항상 맞음"],
+        ["B_off",["883.01","883.01","883.01"],[0,0,0],[0,0,0],"always-no","항상 틀림"]],
+  facts:[["정답 출처","<b>종합서지</b> · 키워드 검색엔 안 걸림"],
+         ["검색어","일리아스, Iliad, Homer, 그리스 신화, Trojan War"],
+         ["최종 후보","028.9(0.9), 883.01(0.76), 028.1(0.62)"],
+         ["후보 → 출력","넣은 후보 7개 중 <b>3개만 출력</b>"]]},
+];
+
+// ── 케이스 렌더 ──
+const DIFF = {"하":"diff-ha", "중":"diff-jung", "상":"diff-sang"};
+const bar = document.querySelector(".casebar");
+const box = document.getElementById("cases");
+
+CASES.forEach((c, i) => {
+  const b = document.createElement("button");
+  b.className = "cbtn"; b.type = "button"; b.role = "tab";
+  b.setAttribute("aria-selected", i === 0 ? "true" : "false");
+  b.setAttribute("aria-controls", "case" + c.id);
+  b.textContent = "#" + c.id;
+  b.title = c.title;
+  b.addEventListener("click", () => selectCase(i));
+  bar.appendChild(b);
+
+  const sec = document.createElement("article");
+  sec.className = "case"; sec.id = "case" + c.id;
+  if (i !== 0) sec.hidden = true;
+
+  const rows = c.rows.map(([combo, preds, oks, escs, tagCls, tagTxt]) => {
+    const cells = preds.map((p, k) =>
+      `<td><span class="v ${oks[k] ? "ok" : "no"}"><span class="ddc">${p}</span></span>${escs[k] ? '<span class="esc">사서</span>' : ""}</td>`
+    ).join("");
+    return `<tr><td class="ddc">${combo}</td>${cells}<td><span class="tag ${tagCls}">${tagTxt}</span></td></tr>`;
+  }).join("");
+
+  const facts = c.facts.map(([k, v]) => `<li><b>${k}</b><span>${v}</span></li>`).join("");
+
+  sec.innerHTML = `
+    <div class="case-head">
+      <span class="case-id">#${c.id}</span>
+      <h3>「${c.title}」</h3>
+      <span class="tag ${DIFF[c.diff]}">난이도 ${c.diff}</span>
+    </div>
+    <p class="sub">사서는 이렇게 했다</p>
+    <pre>${c.head}</pre>
+    <p>${c.note}</p>
+    <p class="sub">시스템은 이렇게 했다</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>조합</th><th>r1</th><th>r2</th><th>r3</th><th>판정</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <ul class="facts">${facts}</ul>`;
+  box.appendChild(sec);
+});
+
+function selectCase(idx) {
+  bar.querySelectorAll(".cbtn").forEach((b, i) => b.setAttribute("aria-selected", i === idx ? "true" : "false"));
+  box.querySelectorAll(".case").forEach((s, i) => { s.hidden = i !== idx; });
+}
+
+// ── 절 탭 ──
+const tabs = Array.from(document.querySelectorAll(".tab"));
+function selectTab(idx) {
+  tabs.forEach((t, i) => {
+    const on = i === idx;
+    t.setAttribute("aria-selected", on ? "true" : "false");
+    document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+  });
+  window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+tabs.forEach((t, i) => {
+  t.addEventListener("click", () => selectTab(i));
+  t.addEventListener("keydown", (e) => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const n = (i + d + tabs.length) % tabs.length;
+    tabs[n].focus(); selectTab(n);
+  });
+});
+</script>

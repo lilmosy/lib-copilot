@@ -1,0 +1,20 @@
+{
+  "case_id": 4,
+  "difficulty_label": "하",
+  "source": "청구기호(h번호) 자동생성 · 케이스 분석.docx + KERIS 종합목록",
+  "input": {
+    "title": "차근차근 전통주",
+    "author": "박운석",
+    "is_translation": false,
+    "ddc_082": "663.1"
+  },
+  "expected": {
+    "writer_final": "641.210951",
+    "review_final": "641.210951",
+    "difficulty": "하",
+    "note": "082(663.1 양조공업) 대신 종합서지 641.210951(한국 전통주/조리)로 단일 수렴. voting 단일값."
+  },
+  "holdout_ids": [
+    "CATTOC000001025238"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "case_id": 2,
+  "difficulty_label": "하",
+  "source": "청구기호(h번호) 자동생성 · 케이스 분석.docx + KERIS 종합목록",
+  "input": {
+    "title": "이 책만큼은 끝까지 읽어 보겠습니다",
+    "subtitle": "안 읽는 게 아니고 못 읽는 사람을 위한 책",
+    "author": "임희영",
+    "is_translation": false,
+    "ddc_082": "029.4"
+  },
+  "expected": {
+    "writer_final": "028",
+    "review_final": "028",
+    "difficulty": "하",
+    "note": "082(029.4) 본교 무관 → 종합서지 028(책읽기/독서)로 수렴. 082 기각 후 재선택."
+  },
+  "holdout_ids": [
+    "CATTOC000001025256"
+  ]
+}
