@@ -70,8 +70,10 @@ cd lib_copilot_a          (또는 lib_copilot_b)
 
 ## ⚠️ 반드시 지킬 것
 
-1. **크롤 데이터는 커밋하지 않는다** — `data/sogang_db_final.db`(1.3GB) · `data/union_db.json`.
-   `git add data/`를 통째로 하지 말 것. (골든셋·책소개 캐시는 커밋 대상)
+1. **외부에서 받아온 산출물은 커밋하지 않는다** — 드라이브로 배포한다.
+   `data/sogang_db_final.db`(1.3GB) · `data/union_db.json` · `data/aladin_cache.json`.
+   `git add data/`를 통째로 하지 말 것. **골든셋(`data/scenarios/`)만 커밋 대상**이다.
+   책소개 캐시는 출판사 저작물이라 저장소가 Public이 되면서 뺐다(2026-08-18).
 2. **평가 경로를 바꿨으면 `--label`을 바꿔 새 회차로 남긴다.** 회차 산출물은 덮어쓰지 않는다.
 3. **LLM 호출은 `classify.py` 안에서만 한다.** 지금 셋이다 —
    `check_prior()` · `extract_keywords()` · `classify()`. 다른 파일에서 부르지 않는다.
