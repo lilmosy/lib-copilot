@@ -24,7 +24,8 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import classify  # noqa: E402
+import fit as _fit  # noqa: E402
+import schema  # noqa: E402
 from config import SCENARIO_DIR, THRESHOLD_1, THRESHOLD_2  # noqa: E402
 from pipeline import classify_book  # noqa: E402
 from schema import BookInput  # noqa: E402
@@ -32,19 +33,20 @@ from schema import BookInput  # noqa: E402
 st.set_page_config(page_title="lib_copilot — 프롬프트 작업창", page_icon="🔧", layout="wide")
 
 MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "claude-opus-4-8", "claude-sonnet-5"]
-PROMPT_1 = ROOT / "prompts" / "systemprompt_1st.txt"
-PROMPT_2 = ROOT / "prompts" / "systemprompt_2nd.txt"
+PROMPT_FIT = ROOT / "prompts" / "systemprompt_shelf_fit.txt"
 
 
-def _run(case_path: Path, model: str, sys1: str, sys2: str) -> dict:
+def _run(case_path: Path, model: str, sys_fit: str) -> dict:
     """프롬프트·모델을 갈아끼우고 한 건 돌린다.
 
-    `classify` 모듈의 전역을 바꾼다 — 호출 시점에 읽히므로 이것으로 충분하고,
+    `fit` 모듈의 전역을 바꾼다 — 호출 시점에 읽히므로 이것으로 충분하고,
     파일을 안 건드리니 다른 사람 실행에 영향이 없다.
+
+    ⚠️ 지문이 하나가 됐다(2026-08-19). 후보마다 같은 지문으로 따로 부르므로,
+       여기서 한 줄만 고쳐도 **모든 후보의 점수가 같이 움직인다** — 그게 이 구조의 요점이다.
     """
-    classify.SYSTEM_1ST = sys1
-    classify.SYSTEM_2ND = sys2
-    classify.MODEL_PRIOR = classify.MODEL_MAIN = model
+    _fit.SYSTEM_FIT = sys_fit
+    _fit.MODEL_FIT = model
 
     d = json.loads(case_path.read_text(encoding="utf-8"))
     raw = dict(d["input"])
@@ -60,7 +62,7 @@ def _run(case_path: Path, model: str, sys1: str, sys2: str) -> dict:
 
 
 def _scores(r: dict) -> dict[str, float]:
-    return {c.h: c.shelf_fit for c in r["out"].result.candidates}
+    return {a.h: a.shelf_fit for a in r["out"].decision.assessments}
 
 
 # ══ 사이드바 — 무엇을 돌릴까 ══════════════════════════════
@@ -81,18 +83,15 @@ with left:
     st.subheader("⬜ 넣는 것")
     st.caption("시스템 프롬프트는 여기서 고쳐도 **파일은 안 바뀝니다.** "
                "괜찮으면 `prompts/*.txt`에 직접 반영하세요.")
-    sys1 = st.text_area("1차 — 082 하나만 서가에 대본다  `systemprompt_1st.txt`",
-                        value=PROMPT_1.read_text(encoding="utf-8"), height=200, key="s1")
-    sys2 = st.text_area("2차 — 후보를 비교하고 점수를 매긴다  `systemprompt_2nd.txt`",
-                        value=PROMPT_2.read_text(encoding="utf-8"), height=320, key="s2")
+    sys_fit = st.text_area("독립 fit — 책 한 권 × 서가 한 곳  `systemprompt_shelf_fit.txt`",
+                           value=PROMPT_FIT.read_text(encoding="utf-8"), height=420, key="sf")
     go = st.button("▶ 돌리기", type="primary", use_container_width=True)
 
 if go:
     with st.spinner(f"{model} 로 「{case.stem}」 판단 중…"):
         try:
             cur = _run(case, model,
-                       sys1.replace("{SHELF_FIT_RUBRIC}", classify.SHELF_FIT_RUBRIC),
-                       sys2.replace("{SHELF_FIT_RUBRIC}", classify.SHELF_FIT_RUBRIC))
+                       sys_fit.replace("{SHELF_FIT_RUBRIC}", schema.SHELF_FIT_RUBRIC))
         except Exception as e:                # 죽어도 화면은 남게
             st.error(f"{type(e).__name__}: {e}")
             cur = None
@@ -110,17 +109,17 @@ with right:
         st.stop()
 
     out, gold = cur["out"], cur["gold"]
-    res, retr = out.result, out.retrieve
-    top = res.candidates[0] if res.candidates else None
+    dec, retr = out.decision, out.retrieve
+    top = dec.top
 
     ok = "✅" if top and top.h == gold else "❌"
-    tag = "자동확정" if not res.escalate else "사서에게 넘김"
+    tag = "자동확정" if not dec.escalate else "사서에게 넘김"
     st.subheader(f"{ok} {tag} — `{top.h if top else '없음'}`"
                  + ("" if top and top.h == gold else f"  (정답 `{gold}`)"))
     st.caption(f"{cur['model']} · {cur['sec']}초"
                + (f" · ⚠️ 작성자 {cur['writer']} → 교열 {cur['review']} (사람도 갈린 건)"
                   if cur["writer"] != cur["review"] else ""))
-    st.markdown(f"> ⚙️ **코드가 정함** — {res.escalate_reason}")
+    st.markdown(f"> ⚙️ **코드가 정함** — {dec.escalate_reason}")
 
     # ── 직전 실행과 비교 — 이게 이 화면의 핵심이다 ──
     if prev:
@@ -135,7 +134,7 @@ with right:
                          "직전": "—" if old is None else f"{old:.2f}",
                          "지금": "—" if new is None else f"{new:.2f}", "": arrow})
         st.dataframe(rows, hide_index=True, use_container_width=True)
-        p_top = prev["out"].result.candidates[0].h if prev["out"].result.candidates else None
+        p_top = prev["out"].decision.top.h if prev["out"].decision.top else None
         if p_top != (top.h if top else None):
             st.warning(f"**1순위가 바뀌었습니다** — `{p_top}` → `{top.h if top else '없음'}`")
         st.caption(f"직전: {prev['model']} · 「{prev['title']}」")
@@ -146,33 +145,37 @@ with right:
     st.markdown("##### 🟩 LLM 출력 — 손대지 않은 그대로")
 
     if out.prior:
-        gate = (f" → {THRESHOLD_1} 이상이라 **종합서지를 안 봤습니다**"
+        gate = (f" → {THRESHOLD_1} 이상이라 1단계 문턱을 넘었습니다"
                 if out.prior.shelf_fit >= THRESHOLD_1 else "")
-        st.markdown(f"**1차 · 082({cur['ddc_082']})만 봄** — `shelf_fit` "
-                    f"**{out.prior.shelf_fit}**{gate}")
-        st.markdown(f"> `verdict` — {out.prior.verdict}")
+        st.caption(f"1단계 082({cur['ddc_082']}) 적합도 **{out.prior.shelf_fit}**{gate}")
     elif not out.inherited:
-        st.caption("1차 호출 없음 — 082가 없거나 그 번호대 본교 책이 0권입니다.")
+        st.caption("1단계 fit 없음 — 082가 없거나 그 번호대 본교 책이 0권입니다.")
 
-    st.markdown("**2차 · 후보 비교**")
-    for i, c in enumerate(res.candidates, 1):
-        mark = " ★정답" if c.h == gold else (" (082)" if c.h == cur["ddc_082"] else "")
-        st.markdown(f"**{i}위 · `{c.h}`{mark}** — `shelf_fit` **{c.shelf_fit}**")
-        st.markdown(f"　　`label` — {c.label}")
-        st.markdown(f"　　`reasoning` — {c.reasoning}")
-    if res.notes:
-        st.markdown(f"**`notes`** (전체 판단 + 버린 번호의 기각 사유)")
-        st.markdown(f"> {res.notes}")
+    # 순위는 **코드가 정렬한 결과**다. 아래 점수들은 서로를 안 보고 따로 나온 값이다.
+    st.markdown("**후보별 독립 fit** (코드가 정렬)")
+    # 출처는 LLM 출력이 아니라 **코드가 아는 사실**이다(fit 호출엔 안 넣는다 — 규약 8).
+    # 그래서 ShelfFitAssessment에 필드로 넣지 않고, 화면에서 retrieve 결과와 번호로 조인한다.
+    _src = {}
+    for cn in ([retr.prior_candidate] if retr.prior_candidate else []) \
+            + retr.union_candidates + retr.keyword_candidates:
+        _src[cn.ddc_h] = " · ".join(sorted(cn.sources)) or "082"
+    for i, a in enumerate(dec.assessments, 1):
+        mark = " ★정답" if a.h == gold else ""
+        mark += f"  〔{_src.get(a.h, '?')}〕"
+        st.markdown(f"**{i}위 · `{a.h}`{mark}** — `shelf_fit` **{a.shelf_fit}**")
+        st.markdown(f"　　`shelf_label` — {a.shelf_label}")
+        st.markdown(f"　　`fit_reasoning` — {a.fit_reasoning}")
+        if a.cited_books:
+            st.markdown(f"　　`cited_books` — {', '.join(a.cited_books)}")
 
     with st.expander("🟩 출력 원본 (파싱된 그대로)"):
-        st.json({"1차": out.prior.model_dump() if out.prior else None,
-                 "2차": {"candidates": [c.model_dump() for c in res.candidates],
-                         "notes": res.notes}})
+        st.json(dec.model_dump())
 
 # ══ 아래 — 무엇이 들어갔나 (원물) ═════════════════════════
 st.divider()
 st.markdown("##### ⬜ 들어간 데이터")
-cands = ([retr.prior_candidate] if retr.prior_candidate else []) + retr.union_candidates
+cands = (([retr.prior_candidate] if retr.prior_candidate else [])
+         + retr.union_candidates + retr.keyword_candidates)
 lines = ["번호          타대학  본교전체  프롬프트  그중 책소개"]
 for c in cands:
     mark = "(082)" if c.is_082_prior else ("★정답" if c.ddc_h == gold else "")

@@ -1,16 +1,16 @@
 """파이프라인 전 구간의 데이터 계약(스키마).
 
-funnel 구조(docs/design.md):
-  ① 1차 retrieve (recall 넓게) → RetrieveResult(후보 번호 + 근거)
-  ② 2차 classify (precision, LLM) → ClassificationResult(▼h 후보 + 에스컬레이션)
+구조(docs/independent_shelf_fit_spec.md · docs/system_flow_draft.md):
+  ① 후보 찾기 → RetrieveResult      082 → +종합서지 → +키워드로 **누적**된다
+  ② 후보마다 독립 평가 → ShelfFitAssessment   책 1권 × 서가 1곳, 다른 후보를 안 본다
+  ③ 코드가 정렬·판정 → CandidateDecision      LLM 호출 없음
 
-retrieve는 어느 구현(retrieve[기본] / retrieve_embed[예정])이든 이 RetrieveResult를 반환한다.
-내부 방식이 달라도 계약은 동일 → classify/pipeline은 불변.
+**점수는 후보 집합과 무관해야 한다.** 예전에는 후보 여럿을 한 프롬프트에 넣고 한꺼번에
+점수를 매겨서, 같은 책·같은 번호라도 옆에 누가 들어왔느냐로 값이 달라졌다. 그래서 문턱을
+재산정할 수 없었다(devlog 2026-08-18). 지금은 `shelf_fit`이 `(책, 서가)` 하나의 함수다.
 """
 
 from __future__ import annotations
-
-from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -161,27 +161,46 @@ SHELF_FIT_RUBRIC = """1.0 = 그 서가 책들과 사실상 같은 성격이다.
 
 SHELF_FIT_DESC = (
     "본교 이 번호대 서가에 꽂힌 책들과 이 도서의 주제·성격 적합도(0.0~1.0). "
-    "'이 자리에 꽂혀도 어울리나'이지 '이 답이 맞을 확률'이 아니다. "
-    "후보끼리 비교 가능하도록 같은 잣대로 매긴다."
+    "'이 자리에 꽂혀도 어울리나'이지 '이 답이 맞을 확률'도, '후보 중 1위일 확률'도 아니다. "
+    "**다른 후보를 보지 않고** 이 서가 하나만 놓고 매긴다."
 )
 
 
-# ── ③ 2차 classify 산출물 ─────────────────────────────────
-class PriorCheck(BaseModel):
-    """1차 호출 산출물 — **082(업체번호) 하나만** 놓고 본 정합성.
+# ── ③ 판단 산출물 ────────────────────────────────────────
+class ShelfFitAssessment(BaseModel):
+    """**fit 호출 하나의 결과물.** 후보 번호 하나당 하나 나온다.
 
-    2차와 분리한 이유(교수님 지시, 실제 업무 순서): 사서는 082를 먼저 본교 서가에 대보고,
-    거기서 끝나지 않을 때만 종합서지를 편다. 한 번에 다 던지면 그 순서가 뭉개진다.
+    입력은 신규 책 한 권 + 그 번호대 서가 표본(최대 40권)뿐이다. 다른 후보 번호·출처
+    (082/종합서지/키워드)·득표수·현재 단계·문턱은 이 호출에 **넣지 않는다** — 넣는 순간
+    독립 적합도가 아니라 후보 비교·정책 판단 점수가 된다(spec §2 「넣지 말 것」).
 
-    ⚠️ `shelf_fit`은 **2차의 점수와 척도가 다르다**(경쟁자 없이 082 혼자 매긴 점수).
-       그래서 문턱도 따로다 — 이 점수는 `config.THRESHOLD_1`, 2차 점수는 `THRESHOLD_2`가
-       받는다. **두 점수를 한 줄에 놓고 비교하거나 같은 문턱을 대지 말 것.**
+    ⚠️ 구 `PriorCheck`(082 전용)와 구 `Candidate`(후보 비교용)를 이것 하나가 대신한다.
+       예전엔 082를 1차에서 한 번, 최종에서 또 한 번 평가해 **같은 서가에 두 점수**가 났다.
+       지금은 082도 다른 후보와 같은 호출·같은 눈금으로 딱 한 번 평가한다.
+       그래서 THRESHOLD_1과 THRESHOLD_2는 **척도 차이가 아니라 정책 차이**다
+       (1단계는 뒤 후보를 아예 안 보고 끝내므로 더 보수적으로 둔다).
     """
 
-    shelf_fit: float = Field(ge=0.0, le=1.0, description="082 번호대에 대한 " + SHELF_FIT_DESC)
-    verdict: str = Field(
-        description="왜 그 점수인지 1~2문장. 그 번호대 본교 서가가 무슨 자리였고 "
-                    "이 책과 어디가 맞고 어디가 안 맞는지. 사서가 그대로 읽을 문장으로."
+    h: str = Field(description="분류기호, 예: 720.2")
+    shelf_label: str = Field(
+        description="이 입력 서가 표본 전체의 반복 주제와 자료 성격을 요약한 짧은 이름. "
+                    "DDC 공식 명칭이 아니라 사서가 후보를 빠르게 읽기 위한 표시용 요약이다. "
+                    "점수·후보 정렬·자동확정에는 쓰지 않는다."
+    )
+    shelf_fit: float = Field(ge=0.0, le=1.0, description=SHELF_FIT_DESC)
+    fit_reasoning: str = Field(
+        description="2~4문장. ①이 서가 표본 전체에서 반복되는 중심 주제와 자료 성격 "
+                    "②신규 도서의 중심 초점이 그 성격과 맞는 지점 "
+                    "③신규 도서와 이 서가 사이에 실제로 남는 불일치 또는 사서 확인이 필요한 "
+                    "판단 보류 지점. 입력에 없는 다른 번호나 서가를 추측하지 않는다. "
+                    "사서가 그대로 읽을 문장으로."
+    )
+    cited_books: list[str] = Field(
+        default_factory=list, min_length=0, max_length=4,
+        description="판단 근거를 보여주는 대표 도서 2~4권의 제목. "
+                    "**입력 표본 안에 실제로 있는 책만** 인용한다. "
+                    "40권 중 2~4권만 인용한다고 해서 2~4권만 읽었다는 뜻은 아니다 — "
+                    "사서가 근거를 확인할 앵커다. 코드가 표본 제목과 대조한 뒤 결과에 남긴다.",
     )
 
 
@@ -190,13 +209,13 @@ class KeywordExtraction(BaseModel):
 
     **082 서가를 보여주지 않고 부른다.** 서가를 보여주면 그 어휘로 물들어서, 082가 오답인
     케이스에서 키워드가 오답 쪽으로 끌려간다 — 그런데 082가 오답인 케이스야말로
-    키워드 검색이 필요한 자리다(classify.extract_keywords 참고).
+    키워드 검색이 필요한 자리다(keyword.extract_keywords 참고).
 
     ⚠️ 검색은 `title`과 `marc_650`에 LIKE로 걸린다. 650은 **LCSH 영어 표목**이라
        한국어만 뽑으면 거의 안 걸린다 — 실측: '이중언어' 3권 ↔ 'bilingual' 23권+.
     ⚠️ '역사'·'연구'·'입문' 같은 형식어를 넣으면 수천 권짜리 대서가가 끌려와 정답이 묻힌다.
        실측: ['향신료','spices','향료','spice'] → 정답 641.338309 나옴 /
-            여기에 '역사','history'를 더하면 → 901(82권)·909(52권)에 파묻힘.
+            여기에 '역사','history'를 더하면 → 901(82권)·909(52권)에 파묻힌다.
     """
 
     keywords: list[str] = Field(
@@ -206,69 +225,33 @@ class KeywordExtraction(BaseModel):
     )
 
 
-class Candidate(BaseModel):
-    """▼h 후보 하나 + 판단 근거(XAI) + 적합도 점수.
+class CandidateDecision(BaseModel):
+    """파이프라인 산출물: 점수 벡터 + **코드가 정한** 결론.
 
-    ⚠️ '어디서 온 후보인가'(구 CandidateSource)를 다시 넣지 말 것 —
-       `h == book.ddc_082` / `PipelineOutput.inherited`로 계산된다.
+    ⚠️ 여기에 LLM이 채우는 필드는 하나도 없다. LLM은 후보마다 `ShelfFitAssessment`를
+       낼 뿐이고, 정렬·자동확정·에스컬레이션은 전부 `decide.py`가 한다.
+       예전엔 LLM이 escalate 불린을 직접 냈는데, 불린은 숫자가 아니라 이미 내려진 결정이라
+       저장된 회차로 문턱을 다시 쓸어볼 수가 없었다(2026-08-05).
 
-    ⚠️ `shelf_fit`은 구 `confidence`와 다르다. confidence는 프롬프트에 정의가 없어
-       LLM 자의로 채워지던 값이었다. 이쪽은 **"본교 그 번호대 서가 책들과의 주제·성격 적합도"**로
-       정의가 프롬프트에 박혀 있다. **이 점수가 흐름을 정한다** —
-       `pipeline.decide_escalate()`가 `THRESHOLD_2`로 넘길지를 계산한다(2026-08-05).
+    ⚠️ 점수를 **더하거나 가중합하지 않는다**(spec §7). 벡터를 정렬해 정책을 적용할 뿐이다.
+
+    ⚠️ 여기에 태그 필드를 다시 넣지 말 것 — 구 `signals`/`ambiguity`/`confidence`.
+       원칙: 시스템이 이미 아는 것은 LLM에게 묻지 않는다.
     """
 
-    h: str = Field(description="분류기호, 예: 720.2")
-    shelf_fit: float = Field(ge=0.0, le=1.0, description=SHELF_FIT_DESC)
-    label: str = Field(
-        description="이 번호대가 무슨 주제인지 한 줄로. ⚠️ DDC 공식 항목명이 아니라 "
-                    "서가 책들을 보고 네가 요약한 이름이다(화면에도 그렇게 표기한다)."
+    assessments: list[ShelfFitAssessment] = Field(
+        default_factory=list, description="후보별 독립 점수 (shelf_fit 내림차순 정렬, 코드가 정렬)"
     )
-    reasoning: str = Field(
-        description="왜 이 번호인지. 서가의 어떤 책이 근거인지 제목을 들어 설명한다."
+    auto_confirm_eligible: bool = Field(
+        default=False,
+        description="현재 임계값 기준으로 자동확정 조건을 통과했는가. 파일럿에서는 통과해도 "
+                    "실제 자동확정을 끌 수 있다. LLM이 아닌 코드가 계산한다."
     )
-
-
-class LLMJudgement(BaseModel):
-    """2차 LLM이 **실제로 내놓는 것**. `escalate`가 여기 없는 게 핵심이다.
-
-    예전엔 LLM이 escalate 불린을 직접 냈다. 그러면 넘기는 기준을 못 바꾼다 —
-    불린은 숫자가 아니라 이미 내려진 결정이라, 회차 기록에 "문턱이 이랬으면"에
-    해당하는 값이 없다. 기준을 바꾸려면 프롬프트를 고쳐 12건을 다시 돌려야 했고,
-    실행마다 흔들려서 신호가 묻혔다(2026-08-05).
-
-    지금은 LLM이 **점수만** 내고, 넘길지는 `pipeline.decide_escalate()`가 `config.THRESHOLD_2`로
-    정한다. 저장된 회차 JSON만으로 문턱을 쓸어볼 수 있다(재실행 0회, 비용 0원).
-    """
-
-    candidates: list[Candidate] = Field(description="적합한 순서대로 후보(shelf_fit 내림차순)")
-    notes: str | None = Field(
-        default=None, description="판단 근거를 사람 언어로. 화면에 그대로 보여주는 문장."
-    )
-
-
-class ClassificationResult(BaseModel):
-    """파이프라인 수준의 2차 산출물: LLM 점수 + **코드가 정한** 에스컬레이션.
-
-    흐름을 정하는 스위치는 `escalate` 하나다(false=단일 답 / true=단일 강제 안 함).
-    ⚠️ 이 값은 LLM이 채우지 않는다. `pipeline.decide_escalate()`가 `config.THRESHOLD_2`로 계산한다.
-
-    ⚠️ 여기에 태그 필드를 다시 넣지 말 것:
-      - 구 `signals`(cross_major/needs_toc/scattered_dist/org_disagree) — docx 부록1의
-        '상 케이스 공통 신호'다. **참조는 프롬프트가 시키고, 이유는 notes가 문장으로 쓴다.**
-        태그로 기록해봐야 흐름을 바꾸지 않았다(집계 말고는 쓰임이 없었다).
-      - 구 `ambiguity`/`confidence` — 프롬프트에 정의가 없어 LLM 자의로 채워지던 값.
-    임계값이 필요해지면 그때 정의와 함께 추가한다.
-    """
-
-    candidates: list[Candidate] = Field(description="적합한 순서대로 후보(shelf_fit 내림차순)")
     escalate: bool = Field(default=False, description="사람 사서 판단이 필요한가 (코드가 계산)")
     escalate_reason: str = Field(
         default="", description="왜 넘겼나/안 넘겼나 — 문턱과 실제 점수를 사람 말로. 화면·로그용"
     )
-    notes: str | None = Field(
-        default=None, description="판단 근거를 사람 언어로. 화면에 그대로 보여주는 문장."
-    )
 
-    # ⚠️ 구 `prior_verdict`(082 기각 사유)는 제거했다 — 호출을 둘로 나누면서
-    #    1차 산출물 `PriorCheck.verdict`가 그 자리를 그대로 대신한다(2026-08-05).
+    @property
+    def top(self) -> ShelfFitAssessment | None:
+        return self.assessments[0] if self.assessments else None

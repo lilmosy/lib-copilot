@@ -13,7 +13,7 @@
 (`merge_candidates`) — 같은 서가 40권을 프롬프트에 두 번 찍는 낭비를 막고,
 "증거가 겹쳤다"는 사실은 라벨로 남는다.
 
-**계약 동일:** 어느 채널이든 같은 `CandidateNumber`를 만든다. classify/pipeline은 불변.
+**계약 동일:** 어느 채널이든 같은 `CandidateNumber`를 만든다. fit/pipeline은 불변.
 """
 
 from __future__ import annotations
@@ -38,7 +38,9 @@ def _make(ddc: str, *, sources: set[str], votes: int = 0, hits: int = 0,
         keyword_hits=hits,
         shelf_count=sogang_db.shelf_count(ddc, holdout=holdout),
         shelf_books=sogang_db.shelf_books(ddc, limit=limit, holdout=holdout),
-        subject_top=sogang_db.subject_top(ddc, SUBJECT_TOP) if subject else [],
+        # SUBJECT_TOP=0이면 아예 묻지 않는다 — 번호대 전량을 훑는 질의라 공짜가 아니다.
+        subject_top=(sogang_db.subject_top(ddc, SUBJECT_TOP)
+                     if subject and SUBJECT_TOP > 0 else []),
     )
 
 

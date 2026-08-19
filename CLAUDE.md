@@ -5,68 +5,64 @@
 ## 한 줄
 
 도서관 청구기호(852 ▼h)를 매기는 사서-AI 협업 에이전트.
-**쉬운 책은 자동으로 끝내고, 판단이 갈리는 책만 사람에게 넘긴다.**
+**현재 파일럿은 모든 비승계 책을 사서가 확정하고, 충분히 검증된 뒤 쉬운 책만 자동화한다.**
 
-## ⚠️ 배선이 둘이다 (2026-08-18~)
+## 지금 구조 — 독립 shelf_fit + 3단계 (2026-08-19 전환 완료)
 
-```
-lib_copilot/
-├── docs · prompts는 아니고 —— 아래가 **공유**다 (한 벌만 있다)
-│   docs/  crawler/  README.md  CLAUDE.md  .gitignore  .env.example  requirements.txt
-│   20260818_AB종합.md   ab_report.html   run_all.sh
-│
-├── lib_copilot_a/   버전 A — 병합.   082+종합서지+키워드를 한 자리에 놓고 한 번 판단
-└── lib_copilot_b/   버전 B — 조건부. 082+종합서지로 먼저 판단하고, 미달일 때만 키워드
-```
+지시서는 `docs/independent_shelf_fit_spec.md`, 흐름도는 `docs/system_flow_draft.md`
+(둘 다 로컬 전용 — docs는 design.md만 커밋된다).
 
-**a와 b가 다른 파일은 `src/pipeline.py` 하나뿐이다.** 프롬프트·검색·병합·스키마·평가는
-글자까지 같다 — 그래야 "이 차이 때문이다"라고 말할 수 있다.
-**a/b 안의 공유 파일(`src/*`, `prompts/*`, `evaluate.py` 등)을 고치면 양쪽 다 고쳐야 한다.**
-문서·설정은 상위에 한 벌뿐이라 그 걱정이 없다.
-
-B의 `data/sogang_db_final.db`·`union_db.json`은 A를 가리키는 심볼릭 링크다(실물 하나).
-
-비교가 끝나면 진 쪽을 지운다. 쟁점은 **후보를 늘리는 게 이득인가**와
-**B의 트리거(LLM 확신도)가 확신하며 틀린 건을 못 잡는 문제**다 — design.md §3, devlog 2026-08-18.
-
-> **⏳ 다음 구조 개편**: 지금은 `src/`가 a·b에 두 벌이라 손으로 맞춰야 한다.
-> `pipeline_a.py`/`pipeline_b.py`만 남기고 나머지를 상위 `src/` 하나로 합치면
-> "글자까지 같다"가 규칙이 아니라 **구조**가 된다. 3개 상한 재실행이 끝난 뒤에 한다
-> — 지금 바꾸면 재실행 결과에 변수가 둘이 된다.
+- 점수 `shelf_fit`은 **책 한 권 × 서가 한 곳**만 놓고 매긴다. 다른 후보·출처·단계·문턱은
+  그 호출에 넣지 않는다. 그래야 같은 눈금이 되고 문턱을 재산정할 수 있다.
+- 후보는 082 → +종합서지 → +키워드로 **누적**되고, 각 단계는 **새로 생긴 후보에만** 점수를 매긴다.
+  같은 서가는 전 과정에서 **딱 한 번** 평가된다.
+- 정렬·참고 임계값·사람에게 넘김은 전부 코드가 정한다(`src/decide.py`). 기본값
+  `LIBCOPILOT_AUTO_CONFIRM=off`에서는 문턱 통과도 사서 검토로 보낸다.
+- ⚠️ **임계값 둘은 지금 근거가 없는 값이다.** 옛 척도(후보 비교 점수)에서 뽑은 값이라
+  독립 fit 분포에서는 T2=0.82가 아무것도 거르지 못한다(2026-08-19 실측: 33건 중 31건 통과).
+  게이트를 열고(`LIBCOPILOT_EARLY_STOP=off`) 분포 회차를 쌓고 재산정하는 중이다.
+- 구 구조(`lib_copilot_a`/`_b` 두 벌, classify.py 한 덩어리)는 2026-08-19에 없앴다 —
+  경위는 devlog.
 
 ## 먼저 읽을 것 (진짜 내용은 여기 있다)
 
 - **[docs/design.md](docs/design.md)** — 설계 정본. 문제의식(§1) · 사서 업무(§2) · 시스템(§3) ·
   데이터(§4) · 스키마(§5) · 평가(§7) · **규약(§8)** · 한계(§9) · **확장 미구현(§11)**
-- **[docs/devlog.md](docs/devlog.md)** — 시간순 기록. "왜 이렇게 됐나"는 여기
+- **docs/devlog.md** — 시간순 기록. "왜 이렇게 됐나"는 여기.
+  ⚠️ docs는 design.md만 커밋된다(2026-08-19) — 나머지는 로컬·드라이브에만 있다.
 - **[README.md](README.md)** — 팀원 진입점. 받아서 돌리는 법
 
 ## 구조
 
-**실행은 `lib_copilot_a/` 또는 `lib_copilot_b/` 안에서 한다.** 상위에서 하지 않는다.
+저장소 루트에서 실행한다.
 
 ```
-cd lib_copilot_a          (또는 lib_copilot_b)
-
   evaluate.py  골든셋 12건 채점   python evaluate.py --label=xxx --runs=3
   run.py       책 한 권 돌려보기   python run.py <book.json>       ← 터미널 출력만
   app.py       데모 화면          streamlit run app.py
+  app_for_experiment.py           프롬프트 작업창 — 저장 안 함
+
   src/         라이브러리 (직접 실행하지 않는다)
+    pipeline.py   3단계 배선 — **이야기 전체는 이 파일 하나로 읽는다**
+    schema.py     데이터 계약 (BookInput · CandidateNumber · ShelfFitAssessment · CandidateDecision)
+    retrieve.py   후보 찾기 (082 · 종합서지 · 키워드검색)   + union_db.py · sogang_db.py
+    fit.py        LLM-F  독립 shelf_fit — 책 1권 × 서가 1곳, 후보마다 1회 · 인용도서 코드 검증
+    keywords.py   LLM-K  검색어 3~5개 — 책 정보만 본다
+    decide.py     게이트·정렬·문턱·에스컬레이션 — LLM 0회
+    llm.py        API 호출·재시도·원물(trace) 기록 — "무엇을 묻는가"를 모른다
+    prompt.py     지문 읽기 + 책/서가 블록 조립
+    aladin.py     입력 보강 · tokens.py 토큰 규칙
+
   prompts/     시스템 프롬프트 — **코드가 아니라 파일이다**
-                 systemprompt_1st.txt      082 정합성
-                 systemprompt_keyword.txt  검색어 만들기
-                 systemprompt_2nd.txt      최종 판단   ← B는 이걸 두 번 쓴다
+                 systemprompt_shelf_fit.txt  독립 fit (후보마다 같은 지문)
+                 systemprompt_keyword.txt    검색어 만들기
   data/        골든셋 · 책소개 캐시 · DB(커밋 안 함)
   output/      회차 json (커밋 안 함 — 프롬프트 전문이 들어 있어 1MB씩)
 
-상위에서:
-  ./run_all.sh              4조합 × 3회차를 순서대로 (약 40분)
-  20260818_AB종합.md         회차 종합 보고서
-  ab_report.html            같은 내용의 웹 보고서 (가로 탭)
 ```
 
-흐름(A): **보강 → 0차 승계 → 082 후보 → LLM① 082 정합성 → 게이트 → 종합서지
-→ LLM② 키워드 추출 → 키워드 검색 → LLM③ 최종 판단 → 코드 판정**
+흐름: **보강 → 0차 승계 → 【1단계】082 → 【2단계】+종합서지 → 【3단계】+키워드 → 코드 판정**
+각 단계는 새 후보에만 fit 호출을 하고, 판정은 코드가 한다.
 
 ## ⚠️ 반드시 지킬 것
 
@@ -75,8 +71,8 @@ cd lib_copilot_a          (또는 lib_copilot_b)
    `git add data/`를 통째로 하지 말 것. **골든셋(`data/scenarios/`)만 커밋 대상**이다.
    책소개 캐시는 출판사 저작물이라 저장소가 Public이 되면서 뺐다(2026-08-18).
 2. **평가 경로를 바꿨으면 `--label`을 바꿔 새 회차로 남긴다.** 회차 산출물은 덮어쓰지 않는다.
-3. **LLM 호출은 `classify.py` 안에서만 한다.** 지금 셋이다 —
-   `check_prior()` · `extract_keywords()` · `classify()`. 다른 파일에서 부르지 않는다.
+3. **LLM 호출은 `llm.ask()`를 통해서만, 부르는 곳은 `fit.py`·`keywords.py` 둘뿐이다.**
+   지문도 둘뿐이다(fit은 후보마다 같은 지문을 다시 쓴다). 다른 파일에서 부르지 않는다.
 4. **결정 결과를 장서 DB에 되쓰지 않는다.** 누출을 매번 새로 만드는 짓이다. 앱은 읽기 전용.
 5. **홀드아웃을 모든 조회에 통과시킨다** — 승계·서가·**키워드 검색** 전부.
    안 걸면 그 책 자신이 검색에 걸려 자기 번호를 근거로 자기 번호를 찾는다
@@ -85,6 +81,12 @@ cd lib_copilot_a          (또는 lib_copilot_b)
    원칙: **시스템이 이미 아는 것은 LLM에게 묻지 않는다.**
 7. **키워드 추출 호출에 서가를 보여주지 말 것.** 082 서가를 보여주면 그 어휘로 물들어,
    082가 오답인 케이스에서 검색이 오답 쪽으로 끌려간다 — design.md §3.3.
+8. **fit 호출에 다른 후보를 보여주지 말 것** (spec §2 「넣지 말 것」). 다른 번호·출처
+   (082/종합서지/키워드)·득표수·현재 단계·문턱·과거 판례 전부. 하나라도 들어가면 점수가
+   독립 적합도가 아니라 후보 비교 점수가 되어, 문턱 재산정이라는 이 구조의 목적이 무너진다.
+   또한 **같은 서가에 두 번 점수를 매기지 말 것** — 앞 단계 점수를 그대로 쓴다.
+   **082도 넣지 말 것** — LLM에 주는 책 정보는 `prompt.book_content_block()` 하나로 통일돼
+   있고 거기에 082가 없다. 새 호출부를 만들 때 다른 블록을 손으로 조립하지 말 것.
 
 ## ⚠️ 결과를 읽을 때
 

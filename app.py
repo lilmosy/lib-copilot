@@ -40,7 +40,7 @@ def _stats():
 
 
 @st.cache_data
-def _classify(title, subtitle, author, ddc_082, is_translation, original_title):
+def _run_pipeline(title, subtitle, author, ddc_082, is_translation, original_title):
     """데모도 그 책 자신은 홀드아웃(본교에 이미 있으면 누출). 실전 신간은 어차피 없음."""
     book = BookInput(title=title, subtitle=subtitle or None, author=author or None,
                      ddc_082=ddc_082 or None, is_translation=is_translation,
@@ -100,14 +100,14 @@ orig = c2.text_input("원제 (번역서면)", key="f_orig")
 
 if st.button("🔎 분석", type="primary", disabled=not title):
     with st.spinner("0차 승계 → 종합 voting → LLM 주제판단 중…"):
-        st.session_state["out"] = _classify(title, subtitle, author, ddc_082, is_tr, orig)
+        st.session_state["out"] = _run_pipeline(title, subtitle, author, ddc_082, is_tr, orig)
         st.session_state["ctx"] = {"title": title, "ddc_082": ddc_082}
 
 # ══ 결과 ══════════════════════════════════════════════════
 if "out" in st.session_state:
     out, votes, vmeta = st.session_state["out"]
-    res, retr = out.result, out.retrieve
-    top = res.candidates[0] if res.candidates else None
+    dec, retr = out.decision, out.retrieve
+    top = dec.top          # 1순위 ShelfFitAssessment (없으면 None)
 
     st.divider()
     # 화면은 escalate으로 갈린다. 진짜 차이는 문구가 아니라 **클릭 수**다:
@@ -115,16 +115,16 @@ if "out" in st.session_state:
     # 문구는 run.py와 한 글자도 다르지 않게 유지한다(화면이 두 벌이 되면 안 된다).
     if out.inherited:
         st.success(f"### ✅ 기존 서지를 승계했습니다.   ▼h = {top.h}")
-    elif res.escalate:
-        st.warning(f"### ⚠️ 후보가 갈렸습니다 — 사서 판단이 필요합니다.  (후보 {len(res.candidates)}개)")
+    elif dec.escalate:
+        suffix = "현재 참고 문턱은 통과" if dec.auto_confirm_eligible else "현재 참고 문턱 미통과"
+        st.warning(f"### ⚠️ 사서 판단이 필요합니다.  (후보 {len(dec.assessments)}개 · {suffix})")
     else:
         st.success(f"### ✅ 1순위가 정해졌습니다.   ▼h = {top.h}")
-    if res.notes:
-        st.markdown(f"🧠 **종합 판단 근거** — {res.notes}")
+    st.caption(f"🧭 {dec.escalate_reason}")
 
     # ══ 확정 UI ══ 근거보다 **위**에 둔다. 수렴 케이스를 스크롤 없이 1클릭으로 끝내기 위해서다.
     #    (그래도 근거는 아래에 항상 펼쳐져 있다 — 접으면 '틀린 채 확정'을 못 잡는다)
-    opts = [c.h for c in res.candidates]
+    opts = [a.h for a in dec.assessments]
     MANUAL = "직접 입력"
     prior = retr.prior_candidate
 
@@ -140,7 +140,7 @@ if "out" in st.session_state:
         """
         overturned = bool(top and final != top.h)
         row = {**st.session_state["ctx"], "llm_top": top.h if top else None,
-               "candidates": opts, "escalated": res.escalate,
+               "candidates": opts, "escalated": dec.escalate,
                "final": final, "picked_rank": rank, "picked_from": src,
                "agreed": not overturned}
         if overturned:
@@ -173,7 +173,7 @@ if "out" in st.session_state:
 
     def _other_ui(key: str) -> None:
         """'다른 번호로 확정하기' 접기 — LLM 참고 후보 + 종합서지/082 번호 + 직접 입력."""
-        llm_alt = opts[1:] if not res.escalate else []
+        llm_alt = opts[1:] if not dec.escalate else []
         labels = list(llm_alt) + [lb for lb, _, _ in _extra] + [MANUAL]
         n = len(labels) - 1
         # 고를 번호가 없으면(후보가 이미 다 올라간 경우) '선택지 0개'라 쓰지 않는다.
@@ -196,7 +196,7 @@ if "out" in st.session_state:
             if st.button("이 번호로 확정", disabled=not final, key=f"{key}_go"):
                 _confirm(final, rank, src)
 
-    if res.escalate:
+    if dec.escalate:
         # 갈림 — 기본 선택을 비운다. 그래야 그 클릭이 '관성'이 아니라 '판단'으로 기록된다.
         # 라디오에는 경합 후보만 둔다(선택 강제의 초점이 흐려지지 않게). 나머지는 접기로.
         pick = st.radio("아래에서 골라주세요", opts, index=None, horizontal=True, key="pick")
@@ -216,13 +216,13 @@ if "out" in st.session_state:
     st.divider()
     st.markdown("#### 어떻게 이 번호가 됐나")
 
-    cand_by_h = {c.h: c for c in res.candidates}
+    fit_by_h = {a.h: a for a in dec.assessments}    # 번호 → 그 서가의 독립 fit
 
     def _badge(h: str, shelf: int | None = None, prior: bool = False) -> str:
-        """'기각'은 082에만 쓴다. 082는 1차 호출이 명시적으로 판정하지만(PriorCheck),
-        종합서지의 나머지 번호는 '판단해서 버린' 게 아니라 '후보로 안 올린' 것이다.
+        """'기각'은 082에만 쓴다. 082는 1단계에서 명시적으로 평가되지만, 종합서지의
+        나머지 번호는 '판단해서 버린' 게 아니라 '후보로 안 올린' 것이다.
         여기에 기각이라 쓰면 '왜 기각했는지 근거가 없다'는 오해가 생긴다."""
-        if h in cand_by_h:
+        if h in fit_by_h:
             b = "✅ 채택" if (top and h == top.h) else "⬜ 후보"
         else:
             b = "❌ 기각" if prior else "– 후보 아님"
@@ -240,7 +240,7 @@ if "out" in st.session_state:
 
     # 082도 종합서지도 아닌 번호를 LLM이 냈을 때만 셋째 탭이 생긴다(평소엔 2칸).
     known = ({prior.ddc_h} if prior else set()) | {cn.ddc_h for cn in retr.union_candidates}
-    others = [c for c in res.candidates if c.h not in known]
+    others = [a for a in dec.assessments if a.h not in known]
 
     names = ["① 업체 청구기호 (082)", "② 종합서지 청구기호"] + (["③ 그 밖의 후보"] if others else [])
     tabs = st.tabs(names)
@@ -251,14 +251,13 @@ if "out" in st.session_state:
         else:
             st.markdown(f"### `{prior.ddc_h}` → {_badge(prior.ddc_h, prior.shelf_count, prior=True)}")
             st.caption(f"본교 {prior.ddc_h} 서가 {prior.shelf_count}건")
-            # 082가 후보로 남았으면 그 후보 근거(reasoning)가 곧 최종 근거다 — 예전 그대로.
-            # 기각하면 082가 후보에서 빠져 reasoning이 아예 없으므로, 그때만 1차 판정으로 메운다.
-            c = cand_by_h.get(prior.ddc_h)
-            if c:
-                st.markdown(f"> {c.reasoning}")
-            elif out.prior:
-                st.markdown(f"> {out.prior.verdict}")
-                st.caption(f"1차 호출이 082만 놓고 본 적합도 {out.prior.shelf_fit:.2f}")
+            # 082 서가의 fit은 **전 과정에서 한 번만** 매겨진다. 그 하나가 곧 근거다.
+            a = fit_by_h.get(prior.ddc_h) or out.prior
+            if a:
+                st.caption(f"서가 요약: {a.shelf_label}")
+                st.markdown(f"> {a.fit_reasoning}")
+                st.caption(f"이 서가만 놓고 본 적합도 {a.shelf_fit:.2f}"
+                           + (f" · 근거 도서: {', '.join(a.cited_books)}" if a.cited_books else ""))
             else:
                 # 082가 없거나 구버전 회차 데이터를 열었을 때만 여기로 온다.
                 st.info("**후보에서 제외했습니다.** 판단 근거는 위 '종합 판단 근거'를 보세요.")
@@ -293,16 +292,21 @@ if "out" in st.session_state:
             st.caption("※ 대학 수는 '분류 기준'이 아니라 '어느 번호부터 본교에서 확인할지'의 순서 힌트입니다.")
             st.divider()
             for cn in retr.union_candidates:
-                c = cand_by_h.get(cn.ddc_h)
-                if c:
-                    st.markdown(f"**{c.h}** {_badge(c.h, cn.shelf_count)} — {c.label}")
-                    st.markdown(f"> {c.reasoning}")
+                a = fit_by_h.get(cn.ddc_h)
+                if a:
+                    st.markdown(f"**{a.h}** {_badge(a.h, cn.shelf_count)} · 적합도 {a.shelf_fit:.2f}")
+                    st.caption(f"서가 요약: {a.shelf_label}")
+                    st.markdown(f"> {a.fit_reasoning}")
+                    if a.cited_books:
+                        st.caption(f"근거 도서: {', '.join(a.cited_books)}")
                 _shelf(cn)
 
     if others:
         with tabs[2]:
             st.caption("082에도 종합서지에도 없던 번호입니다. 본교 서가 의미로만 판단했습니다.")
-            for c in others:
-                st.markdown(f"### `{c.h}` {_badge(c.h)}")
-                st.caption(c.label)
-                st.markdown(f"> {c.reasoning}")
+            for a in others:
+                st.markdown(f"### `{a.h}` {_badge(a.h)} · 적합도 {a.shelf_fit:.2f}")
+                st.caption(f"서가 요약: {a.shelf_label}")
+                st.markdown(f"> {a.fit_reasoning}")
+                if a.cited_books:
+                    st.caption(f"근거 도서: {', '.join(a.cited_books)}")

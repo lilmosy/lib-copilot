@@ -12,7 +12,7 @@
 단계별 귀속(코드로 계산, 근거 톺아보기의 뼈대):
   - inherited?      : 0차 승계로 끝났나
   - union_recall?   : 교열 최종이 종합서지 voting(서강 제외)에 애초에 들어왔나
-                      (안 들어왔으면 = 검색/데이터 문제지 classify 문제 아님)
+                      (안 들어왔으면 = 검색·데이터 문제지 판단 문제 아님)
   - home_shelf?     : 그 번호대가 본교에 있나 (없으면 서가 의미를 못 읽음)
 
 산출물 → output/<회차>.md (사람이 읽는 요약) + output/<회차>.json (케이스별 상세).
@@ -35,7 +35,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import union_db  # noqa: E402
-from config import OUTPUT_DIR, SCENARIO_DIR, THRESHOLD_1, THRESHOLD_2  # noqa: E402
+from config import (AUTO_CONFIRM_ENABLED, OUTPUT_DIR, SCENARIO_DIR,
+                    THRESHOLD_1, THRESHOLD_2)  # noqa: E402
 from pipeline import classify_book  # noqa: E402
 from schema import BookInput  # noqa: E402
 
@@ -60,19 +61,20 @@ def evaluate_one(path: Path) -> dict:
 
     holdout = (book.title, book.author or "")
     out = classify_book(book, holdout=holdout)
-    cands = out.result.candidates
-    pred = cands[0].h if cands else None
-    cand_hs = [c.h for c in cands]
+    fits = out.decision.assessments          # 이미 shelf_fit 내림차순 (decide.rank)
+    pred = fits[0].h if fits else None
+    cand_hs = [a.h for a in fits]
 
     # ── 단계별 귀속(코드) ──
     votes, vmeta = union_db.voting(book.title)
     union_has_gold = gold in votes
     _retr_cands = (([out.retrieve.prior_candidate] if out.retrieve.prior_candidate else [])
                    + out.retrieve.union_candidates + out.retrieve.keyword_candidates)
-    # 082 게이트로 끝났나 — 이게 참이면 **후보를 펴보지도 않고** 082로 확정한 것이다.
-    # 실패 원인을 "정답이 후보에 없음"으로 오진하지 않으려면 이 사실이 필요하다.
-    gate = (out.prior is not None and out.prior.shelf_fit >= THRESHOLD_1
-            and not out.inherited)
+    # 1단계 082 문턱을 넘었나. ⚠️ **넘었다 ≠ 거기서 끝났다.**
+    # `decide.EARLY_STOP=off`(현재 기본)에서는 넘어도 멈추지 않고 3단계까지 간다.
+    # 실제로 멈췄는지는 `early_stop`(회차 조건)과 함께 봐야 한다.
+    gate1 = (out.prior is not None and out.prior.shelf_fit >= THRESHOLD_1
+             and not out.inherited)
     home_shelf_gold = any(c.ddc_h == gold and c.shelf_count > 0 for c in _retr_cands)
 
     row = {
@@ -94,16 +96,17 @@ def evaluate_one(path: Path) -> dict:
                             and review in cand_hs),
         "prefix": bool(pred and gold and _prefix(pred) == _prefix(gold)),  # 오류분석용(헤드라인 아님)
         "topk": gold in cand_hs,
-        "escalate": out.result.escalate,
+        "escalate": out.decision.escalate,
+        "auto_confirm_eligible": out.decision.auto_confirm_eligible,
         # 왜 넘겼나/안 넘겼나 — 이제 LLM이 아니라 코드가 문턱으로 정한다(T1_FIT·T1_GAP).
-        "escalate_reason": out.result.escalate_reason,
+        "escalate_reason": out.decision.escalate_reason,
         # 기대값은 골든셋 수기 필드가 아니라 사실에서 계산한다 —
         # "작성자와 교열이 갈렸다" = "사람이 봐야 했던 건"이다(12/12 일치 확인, 2026-08-01).
         # 나중에 사서가 "이 건은 사람이 봐야 했다"를 독립적으로 매겨주면 그때 필드로 되살린다.
         "escalate_expected": bool(writer and review and writer != review),
         # 귀속
         "inherited": out.inherited,
-        "gate_confirmed": gate,        # 082 게이트로 조기 확정 (뒤 단계를 안 봄)
+        "gate_1_passed": gate1,   # 1단계 문턱을 넘었나 (넘었다 ≠ 거기서 끝났다)
         "went_keyword": getattr(out, "went_keyword", True),  # 키워드 단계까지 갔나 (B 전용)
         "union_has_gold": union_has_gold,
         # 키워드 채널 — 무엇을 검색했고, 정답이 그 결과에 있었나
@@ -116,18 +119,20 @@ def evaluate_one(path: Path) -> dict:
         "cand_sources": {c.ddc_h: sorted(c.sources) for c in _retr_cands},
         "union_dist": dict(list(votes.items())[:8]),
         "home_shelf_gold": home_shelf_gold,
-        # 1차 호출(082 정합성) 산출물 — 채점엔 안 쓴다. THRESHOLD_1을 찾기 위한 관측값.
+        # 082 후보의 fit — 채점엔 안 쓴다. THRESHOLD_1을 찾기 위한 관측값.
+        # ⚠️ 이제 이 값은 아래 fit_assessments 안에도 그대로 들어 있다(같은 눈금이라서).
         "prior_fit": out.prior.shelf_fit if out.prior else None,
-        "prior_verdict": out.prior.verdict if out.prior else None,
-        # 2차 점수 — **fits[0]** 하나로 자동확정/넘김이 갈린다(config.THRESHOLD_2).
-        "fits": [c.shelf_fit for c in cands],
+        "prior_verdict": out.prior.fit_reasoning if out.prior else None,
+        # ── 후보별 독립 점수 (구 `fits`) ──
+        # 점수만 남기던 자리에 근거·인용도서를 함께 남긴다. 문턱을 재산정할 때
+        # `trace`(프롬프트 전문)를 파싱하지 않고 여기만 보면 되게 하려는 것이다.
+        "fit_assessments": [a.model_dump() for a in fits],
         # ⚠️ gap(1위−2위 격차)은 **판정에 쓰지 않는다**. 여기 남긴 건 관측값일 뿐이다.
         #    예전엔 THRESHOLD_2와 함께 gap 문턱도 있었는데, 24 케이스-회차 동안
         #    gap이 단독으로 발동한 적이 한 번도 없어서(항상 fit이 먼저 걸렸다) 뺐다.
         #    한 번도 안 걸린 조건은 값을 정할 근거가 없다. 다시 넣지 말 것.
-        "gap": (round(cands[0].shelf_fit - cands[1].shelf_fit, 3)
-                if len(cands) >= 2 else None),
-        "notes": out.result.notes,
+        "gap": (round(fits[0].shelf_fit - fits[1].shelf_fit, 3)
+                if len(fits) >= 2 else None),
         "expected_note": exp.get("note"),
         # ── 「무엇을 넣었나」 요약 — 회차 md의 ⬜블록이 쓴다 ──
         # 프롬프트 전문(케이스당 4만~10만 자)은 접어 두고, 여기 적힌 것만 펼쳐 보여준다.
@@ -152,10 +157,11 @@ def _one_liner(row: dict) -> str:
     # ⚠️ 게이트로 끝난 건을 먼저 가른다(2026-08-18). 예전엔 이 분기가 없어서 맨 아래로
     #    떨어져 "정답이 후보에 없음"으로 찍혔는데, 후보에 없던 게 아니라 **후보를 만들지도
     #    않은** 것이다. 원인을 오진하면 엉뚱한 데(종합서지 recall)를 손보게 된다.
-    if row.get("gate_confirmed"):
+    import decide as _dc
+    if row.get("gate_1_passed") and _dc.EARLY_STOP:
         if row["exact"]:
-            return "082 게이트로 조기 확정 — 정답 적중(뒤 단계를 안 봄)."
-        return ("082 게이트로 조기 확정 — **후보를 만들지도 않았음**. "
+            return "1단계 082 게이트로 조기 확정 — 정답 적중(뒤 단계를 안 봄)."
+        return ("1단계 082 게이트로 조기 확정 — **후보를 만들지도 않았음**. "
                 "종합서지·키워드를 보지 않고 082로 끝냄 → THRESHOLD_1 문제.")
     if row["split"]:                                  # 사람도 갈린 건
         if row["escalate"] and row["covers_both"]:
@@ -228,27 +234,31 @@ def _setup_dict() -> dict:
     두 회차가 구별되지 않는다. 코드가 아는 것(모델·임계값·프롬프트 파일과 그 지문)을
     함께 박아 둔다. **지문(fp)이 다르면 프롬프트가 다른 회차다** — 라벨과 무관하게.
     """
-    import classify as _cl
-    import pipeline as _pl
-    from config import (KEYWORD_MIN_HIT, KEYWORD_SHELF, MAX_KEYWORD_CANDIDATES,
-                        MAX_UNION_CANDIDATES, MODEL_KEYWORD, MODEL_MAIN,
-                        MODEL_PRIOR, SEEN_SHELF, SHELF_DESC_TOP, SHELF_SAMPLE,
+    import decide as _dc
+    import fit as _fit
+    import keywords as _kw
+    import prompt as _pr
+    from config import (FIT_CONCURRENCY, KEYWORD_MIN_HIT, KEYWORD_SHELF,
+                        MAX_KEYWORD_CANDIDATES, MAX_UNION_CANDIDATES,
+                        MODEL_FIT, MODEL_KEYWORD, SHELF_DESC_TOP, SHELF_SAMPLE,
                         SUBJECT_TOP)
     return {
-        "version": _pl.VERSION,    # 배선 버전 (A=병합, B=조건부) — pipeline.py가 정한다
-        "model_1st": MODEL_PRIOR, "model_keyword": MODEL_KEYWORD, "model_main": MODEL_MAIN,
-        "prompt_1st": _cl.PROMPT_USED.get("systemprompt_1st"),
-        "prompt_1st_fp": _fp8(_cl.SYSTEM_1ST),
-        "prompt_keyword": _cl.PROMPT_USED.get("systemprompt_keyword"),
-        "prompt_keyword_fp": _fp8(_cl.SYSTEM_KEYWORD),
-        "prompt_2nd": _cl.PROMPT_USED.get("systemprompt_2nd"),
-        "prompt_2nd_fp": _fp8(_cl.SYSTEM_2ND),
+        "structure": "3단계 누적 · 독립 shelf_fit",
+        "model_fit": MODEL_FIT, "model_keyword": MODEL_KEYWORD,
+        "prompt_fit": _pr.PROMPT_USED.get("systemprompt_shelf_fit"),
+        "prompt_fit_fp": _fp8(_fit.SYSTEM_FIT),
+        "prompt_keyword": _pr.PROMPT_USED.get("systemprompt_keyword"),
+        "prompt_keyword_fp": _fp8(_kw.SYSTEM_KEYWORD),
         "threshold_1": THRESHOLD_1, "threshold_2": THRESHOLD_2,
+        "auto_confirm_enabled": AUTO_CONFIRM_ENABLED,
+        # 게이트를 실제로 닫았나. off면 문턱을 넘어도 멈추지 않고 3단계까지 간다 —
+        # 점수 분포를 관측하는 회차가 그렇다. 이 값 없이 gate_1_passed를 읽으면 안 된다.
+        "early_stop": _dc.EARLY_STOP,
+        "fit_concurrency": FIT_CONCURRENCY,
         "shelf_sample": SHELF_SAMPLE, "shelf_desc_top": SHELF_DESC_TOP,
         "keyword_min_hit": KEYWORD_MIN_HIT, "max_keyword": MAX_KEYWORD_CANDIDATES,
         "keyword_shelf": KEYWORD_SHELF, "subject_top": SUBJECT_TOP,
         "max_union": MAX_UNION_CANDIDATES,
-        "seen_shelf": SEEN_SHELF,   # 앞 단계에서 본 후보의 서가를 최종 판단에 다시 넣었나
     }
 
 
@@ -266,7 +276,11 @@ def run_once(paths: list[Path], run_id: str, label: str) -> dict:
             note = (f"넘김 {'O' if r['escalate'] else 'X'} · "
                     f"비교거리 {'O' if r['covers_both'] else 'X'}")
         else:
-            note = "자동확정" if not r["escalate"] else "넘김(불필요)"
+            if not AUTO_CONFIRM_ENABLED:
+                note = ("파일럿 검토 · 참고문턱 통과"
+                        if r["auto_confirm_eligible"] else "파일럿 검토 · 참고문턱 미통과")
+            else:
+                note = "자동확정" if not r["escalate"] else "넘김(불필요)"
             if not r["exact"]:
                 note += " ⚠️틀림"
         inh = " (승계)" if r["inherited"] else ""
@@ -288,14 +302,14 @@ def run_once(paths: list[Path], run_id: str, label: str) -> dict:
         retr = out.retrieve.model_dump(mode="json")
         # 서가 책 목록(후보당 40권 × 상세정보)은 빼고 저장한다.
         # 같은 DB면 언제든 재현되는 값인데 회차당 750KB를 먹는다(빼면 34KB).
-        # 판단 근거는 reasoning/notes에 문장으로 남아 있다.
+        # 판단 근거는 fit_assessments의 fit_reasoning·cited_books에 문장으로 남아 있다.
         # ⚠️ `keyword_hits_all`(검색 전량)은 **지우지 않는다** — 컷을 재실행 없이 다시
         #    쓸어보고, 꼬리에서 재분류 큐를 뽑는 재료다(design.md §11.1).
         for c in ([retr.get("prior_candidate")] + (retr.get("union_candidates") or [])
                   + (retr.get("keyword_candidates") or [])):
             if isinstance(c, dict):
                 c["shelf_books"] = f"(생략 — {len(c.get('shelf_books') or [])}권)"
-        cases.append({**r, "retrieve": retr, "result": out.result.model_dump()})
+        cases.append({**r, "retrieve": retr, "decision": out.decision.model_dump()})
 
     n = len(rows)
     ids = lambda rs: [r["case_id"] for r in rs]
@@ -313,10 +327,15 @@ def run_once(paths: list[Path], run_id: str, label: str) -> dict:
     uncover = [r for r in good if not r["covers_both"]]
     cmax    = max(len(r["candidates"]) for r in rows)
     ur      = sum(not (r["union_has_gold"] or r["inherited"]) for r in rows)
+    eligible = [r for r in rows if r["auto_confirm_eligible"] and not r["inherited"]]
+    eligible_ng = [r for r in eligible if not r["exact"]]
 
     scores = {
         "자동확정": f"{len(auto)}/{n}", "자동확정_정답": len(auto) - len(auto_ng),
         "틀린채확정": ids(auto_ng),
+        "참고문턱통과": f"{len(eligible)}/{n}",
+        "참고문턱통과_정답": len(eligible) - len(eligible_ng),
+        "참고문턱통과_오답": ids(eligible_ng),
         "넘김": f"{len(sent)}/{n}", "제대로넘김": len(good),
         "불필요하게넘김": ids(over), "넘김누락": ids(miss),
         "비교거리": f"{len(cover)}/{len(good)}" if good else "-",
@@ -329,9 +348,12 @@ def run_once(paths: list[Path], run_id: str, label: str) -> dict:
                    ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     print(f"\n ── 자동화 ──")
-    print(f" 손 안 대고 끝냄   {len(auto)}/{n}건 ({len(auto)/n:.0%})   그중 맞음 {len(auto)-len(auto_ng)}")
+    print(f" 실제 자동확정     {len(auto)}/{n}건 ({len(auto)/n:.0%})   그중 맞음 {len(auto)-len(auto_ng)}")
     if auto_ng:
         print(f" ⚠️ 틀린 채 확정    {len(auto_ng)}건 {ids(auto_ng)}   ← 가장 위험")
+    print(f" 참고 문턱 통과   {len(eligible)}/{n}건   그중 맞음 {len(eligible)-len(eligible_ng)}")
+    if eligible_ng:
+        print(f" ⚠️ 참고 문턱만 적용하면 틀릴 건  {len(eligible_ng)}건 {ids(eligible_ng)}")
     print(f"\n ── 사람에게 넘김 ──")
     print(f" 넘긴 것          {len(sent)}/{n}건   제대로 넘김 {len(good)}건")
     if over:
@@ -372,8 +394,9 @@ def main() -> None:
         print("=" * 60)
         for i, s in enumerate(allscores, 1):
             if s:
-                print(f"  r{i}  자동확정 {s['자동확정']} (맞음 {s['자동확정_정답']}) · "
-                      f"틀린채확정 {s['틀린채확정']} · 넘김 {s['넘김']} · 비교거리 {s['비교거리']}")
+                print(f"  r{i}  실제자동 {s['자동확정']} (맞음 {s['자동확정_정답']}) · "
+                      f"참고문턱통과 {s['참고문턱통과']} (맞음 {s['참고문턱통과_정답']}) · "
+                      f"넘김 {s['넘김']} · 비교거리 {s['비교거리']}")
         print("\n  ⚠️ 회차마다 다르면 그게 '흔들림'이다. 고칠 가치가 있는 건 '항상 틀림'이다.")
 
 

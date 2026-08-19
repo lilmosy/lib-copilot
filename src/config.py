@@ -15,12 +15,19 @@ load_dotenv(find_dotenv(usecwd=True))
 #   **모델을 바꾸면 임계값 둘을 다시 찾아야 한다**(점수 성향이 모델마다 다르다).
 #   2026-08-13에 Opus → terra로 갈아탔는데 기본값이 Opus로 남아 있어 코드와 실제가
 #   어긋나 있었다. 회차 md의 "이 회차 조건"만 진실을 말하고 있었다 → 기본값을 맞춘다.
-MODEL_PRIOR = os.environ.get("LIBCOPILOT_MODEL_PRIOR", "gpt-5.6-terra")     # 1차 082 정합성
+MODEL_FIT = os.environ.get("LIBCOPILOT_MODEL_FIT", "gpt-5.6-terra")          # 독립 shelf_fit
 MODEL_KEYWORD = os.environ.get("LIBCOPILOT_MODEL_KEYWORD", "gpt-5.6-terra")  # 키워드 추출
-MODEL_MAIN = os.environ.get("LIBCOPILOT_MODEL", "gpt-5.6-terra")            # 최종 판단
-MODEL = MODEL_MAIN                                                          # 하위호환
 
-# classify 단계 최대 출력 토큰.
+# 한 단계 안의 fit 호출은 서로를 안 보므로 동시에 던진다. 단계 사이는 순차다.
+# 지연이 호출 수에 비례해 늘어나는 걸 막는 유일한 손잡이다.
+FIT_CONCURRENCY = int(os.environ.get("LIBCOPILOT_FIT_CONCURRENCY", "4"))
+
+# 파일럿은 후보·점수·근거를 전부 사서에게 보여주는 기간이다. 임계값을 통과한 결과도
+# 기본값에서는 자동확정하지 않는다. 켜는 시점은 입력·프롬프트·표본을 고정하고 실제 사례로
+# top score + gap 정책을 검증한 뒤다.
+AUTO_CONFIRM_ENABLED = os.environ.get("LIBCOPILOT_AUTO_CONFIRM", "off").lower() == "on"
+
+# LLM 호출 하나의 최대 출력 토큰.
 # adaptive thinking이 이 예산을 함께 쓴다. 서가 책을 상세정보까지 넣으면서
 # 근거가 길어져 4000에서 JSON이 잘렸다(2026-08-01) → 넉넉히 둔다.
 MAX_TOKENS = 16000
@@ -28,7 +35,7 @@ MAX_TOKENS = 16000
 # ── 1차 검색기 선택 (funnel) ──
 # "default": 082 + 종합서지 득표로 후보를 모으고, 서가 의미는 본교에서 읽는다 (retrieve.py)
 # "embed":   임베딩 의미 유사 검색 (예정, retrieve_embed.py)
-# 어느 구현이든 같은 RetrieveResult를 반환하므로 classify/pipeline은 안 바뀐다.
+# 어느 구현이든 같은 RetrieveResult를 반환하므로 fit/pipeline은 안 바뀐다.
 RETRIEVER = os.environ.get("LIBCOPILOT_RETRIEVER", "default")
 
 # 1차 필터 파라미터
@@ -84,35 +91,29 @@ KEYWORD_FALLBACK_BELOW = int(os.environ.get("LIBCOPILOT_KEYWORD_FALLBACK_BELOW",
 #    #12에서 두 모델이 여섯 회차 내내 고르던 오답 883이 빠졌다.
 MAX_KEYWORD_CANDIDATES = int(os.environ.get("LIBCOPILOT_MAX_KEYWORD", "3"))
 
-# 키워드 후보의 서가 표본. 082·종합서지(40권)보다 적게 준다 —
-# 근거의 성격이 다르다: 종합서지는 "타대학이 **이 책**에 매긴 번호"(직접 증거)고
-# 키워드는 "이 주제어가 걸린 자리"(간접 증거)다.
-KEYWORD_SHELF = int(os.environ.get("LIBCOPILOT_KEYWORD_SHELF", "10"))
+# 키워드 후보의 서가 표본. **다른 후보와 같은 40권이다**(2026-08-19).
+# 예전엔 10권만 줬다 — 근거의 성격이 다르다는 이유였다(종합서지=직접 증거, 키워드=간접).
+# 독립 fit에서는 그러면 안 된다. 같은 눈금의 점수를 매기려면 **입력의 모양이 같아야** 한다.
+# 어느 후보만 10권을 보고 매긴 점수는 40권을 보고 매긴 점수와 비교할 수 없다(spec §2·§3.1).
+KEYWORD_SHELF = SHELF_SAMPLE
 
-# 키워드 후보 머리줄에 찍을 650(일반주제명) 빈출어 개수.
-# 10권만 보여주므로 못 보여준 나머지 서가의 성격을 이 한 줄이 대신 말해준다.
-# ⚠️ **번호대 전체**를 센다(표본 40권이 아니라). 표본만 세면 우연에 흔들린다 — 실측:
-#      102(철학 649권)  전체 Philosophy(140)·철학상담(6)  ↔  표본 Philosophy(7)·비교문법(3)
-#    082·종합서지 후보에는 붙이지 않는다(40권이면 서가를 거의 다 보여주므로 중복).
-SUBJECT_TOP = int(os.environ.get("LIBCOPILOT_SUBJECT_TOP", "3"))
+# 후보 머리줄에 찍던 650(일반주제명) 빈출어 개수. **0으로 껐다**(2026-08-19).
+# 키워드 후보에 10권만 보여주던 시절, 못 보여준 서가를 대신하라고 붙인 줄이다.
+# 이제 모든 후보가 40권을 보므로 존재 이유가 사라졌다. 실측으로도 LLM이 이 줄을
+# 근거로 인용한 건 144건 회차에서 87번 중 3번뿐이었다. 코드는 남겨 둔다(값만 0).
+SUBJECT_TOP = int(os.environ.get("LIBCOPILOT_SUBJECT_TOP", "0"))
 
-# ── 앞 단계에서 이미 본 후보의 서가를 최종 판단에 다시 넣을까 ──
-# 교수님 제안(2026-08-17): 앞 호출에서 판단한 후보는 점수만 넘기고 서가를 생략하면
-# 토큰이 준다. 서가 책 1권이 약 187토큰이라 절약이 실재한다.
-#   A에서 끄면  082 서가 40권이 빠진다 (약 7,500토큰)
-#   B에서 끄면  082 40권 + 종합서지 3×40권 = 160권이 빠진다 (약 3만 토큰)
-# ⚠️ 대가는 **정보 비대칭**이다 — 다른 후보는 서가 40권을 보여주고 이 후보만 숫자면,
-#    LLM이 그 후보를 재검토할 방법이 없다. 실측에서 #4는 082가 1위→2위로 밀렸는데
-#    (0.80→0.72) 서가가 없으면 그 판단이 안 나올 수 있다.
-# 기본은 켜둔다(지금까지의 동작). 회차로 비교한다.
-SEEN_SHELF = os.environ.get("LIBCOPILOT_SEEN_SHELF", "on").lower() != "off"
-
-# ── 임계값 둘 — 사서 업무 순서 그대로 ────────────────────
-# 사서는 082를 본교 서가에 대보고, 거기서 끝나면 종합서지를 펴지 않는다.
-# 두 단계에 각각 문턱이 하나씩 붙는다.
+# ── 임계값 둘 — 이제 **척도 차이가 아니라 정책 차이**다 ──
+# 예전엔 1차(082 혼자 본 점수)와 2차(후보끼리 비교한 점수)의 눈금이 서로 달라서 문턱도
+# 둘이었다. 독립 fit에서는 모든 점수가 같은 눈금이다. 두 문턱이 남은 이유는 하나뿐 —
+# **1단계는 뒤 후보를 아예 만들지도 않고 끝내므로 더 보수적이어야 한다.**
 #
-#   THRESHOLD_1   1차 호출(082만 본 점수)이 이 값 이상 → **082로 확정. 종합서지로 안 간다.**
-#   THRESHOLD_2   2차 호출(종합서지까지 본 점수) 1순위가 이 값 미만 → 사서에게 넘긴다.
+#   THRESHOLD_1   1단계 082 점수가 이 값 이상 → 082로 확정. 종합서지·키워드로 안 간다.
+#   THRESHOLD_2   최종 1위 점수가 이 값 미만 → 사서에게 넘긴다.
+#
+# ⚠️ **아래 두 값은 옛 척도에서 뽑은 것이라 지금은 근거가 없다.** 독립 fit은 경쟁자가
+#    없어 점수 분포가 통째로 움직인다. 첫 회차는 게이트를 열어 두고(decide.py의
+#    shadow 판정) 12건 전부 3단계까지 돌려 분포를 관측한 뒤 다시 정한다.
 #
 # ⚠️ THRESHOLD_1을 낮추면 위험하다. 1차 점수는 082의 정오와 상관이 약하다 —
 #    케이스7(082=102 '철학 일반', 정답 794.801 '게임')이 1차에서 0.85~0.90을 받았다.

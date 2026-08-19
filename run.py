@@ -41,23 +41,23 @@ def main() -> None:
     hold = (book.title, book.author or "") if is_golden(book.title) else None
     out = classify_book(book, holdout=hold)
 
-    res, retr = out.result, out.retrieve
-    cands = res.candidates
+    dec, retr = out.decision, out.retrieve
+    fits = dec.assessments          # 이미 shelf_fit 내림차순 (decide.rank)
 
     # ══ 결론 먼저 ══ (app.py와 같은 순서·같은 문구. 화면이 두 벌이 되면 안 된다)
     print("\n" + "═" * 64)
     if out.inherited:
-        print(f"✅ 기존 서지를 승계했습니다.   ▼h = {cands[0].h}")
-    elif res.escalate:
-        print(f"⚠️  후보가 갈렸습니다 — 사서 판단이 필요합니다.  (후보 {len(cands)}개)")
-        for i, c in enumerate(cands, 1):
-            print(f"     [{i}] {c.h}   {c.label}")
+        print(f"✅ 기존 서지를 승계했습니다.   ▼h = {fits[0].h}")
+    elif dec.escalate:
+        state = "현재 참고 문턱 통과" if dec.auto_confirm_eligible else "현재 참고 문턱 미통과"
+        print(f"⚠️  사서 판단이 필요합니다.  (후보 {len(fits)}개 · {state})")
+        for i, a in enumerate(fits, 1):
+            print(f"     [{i}] {a.h}   적합도 {a.shelf_fit:.2f}   {a.shelf_label}")
     else:
-        print(f"✅ 1순위가 정해졌습니다.   ▼h = {cands[0].h}   {cands[0].label}")
-        for i, c in enumerate(cands[1:], 2):
-            print(f"     [{i}] {c.h}   {c.label}   (참고 후보)")
-    if res.notes:
-        print(f"\n🧠 종합 판단 근거: {res.notes}")
+        print(f"✅ 1순위가 정해졌습니다.   ▼h = {fits[0].h}   적합도 {fits[0].shelf_fit:.2f}")
+        for i, a in enumerate(fits[1:], 2):
+            print(f"     [{i}] {a.h}   적합도 {a.shelf_fit:.2f}   (참고 후보)")
+    print(f"\n🧭 판정: {dec.escalate_reason}")
     print("═" * 64)
 
     # ══ 근거는 아래 ══
@@ -73,7 +73,7 @@ def main() -> None:
     if retr.prior_candidate:
         _show(retr.prior_candidate, " ★082")
         if out.prior:
-            print(f"      1차 판정: 적합도 {out.prior.shelf_fit:.2f} — {out.prior.verdict}")
+            print(f"      1단계 fit: {out.prior.shelf_fit:.2f} — {out.prior.fit_reasoning}")
     else:
         print("   (082 없음)")
 
@@ -81,10 +81,22 @@ def main() -> None:
     for c in retr.union_candidates:
         _show(c, f"  [{c.union_votes}개 대학]")
 
-    print("\n📚 후보별 판단 근거:")
-    for i, cand in enumerate(cands, 1):
-        print(f"  [{i}] {cand.h}  {cand.label}")
-        print(f"      {cand.reasoning}")
+    if retr.keyword_query:
+        print(f"\n🔎 3단계 — 키워드 검색: {', '.join(retr.keyword_query)}")
+        for c in retr.keyword_candidates:
+            _show(c, f"  [{c.keyword_hits}권 매칭]")
+
+    # 후보마다 **따로** 매긴 점수다. 서로를 안 보고 나온 값이라 나란히 놓고 비교해도 된다.
+    _src = {c.ddc_h: " · ".join(sorted(c.sources)) or "082"
+            for c in (([retr.prior_candidate] if retr.prior_candidate else [])
+                      + retr.union_candidates + retr.keyword_candidates)}
+    print("\n📚 후보별 독립 적합도:")
+    for i, a in enumerate(fits, 1):
+        print(f"  [{i}] {a.h}  shelf_fit {a.shelf_fit:.2f}  〔{_src.get(a.h, '?')}〕")
+        print(f"      서가 요약: {a.shelf_label}")
+        print(f"      {a.fit_reasoning}")
+        if a.cited_books:
+            print(f"      근거 도서: {', '.join(a.cited_books)}")
 
     if expected:
         print(f"\n🎯 정답: 작성자확정={expected.get('writer_final')} "
